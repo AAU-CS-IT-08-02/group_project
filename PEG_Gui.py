@@ -278,6 +278,16 @@ running            = False   # True while the simulation plays automatically (Pl
 step_delay_seconds = 0.25    # Pause between automatic steps, in seconds (lower = faster)
 step_count         = 0       # How many steps have been taken in this session
 simulation_step_limit = 300  # Maximum number of steps to run before auto-stopping
+training_mode      = False   # When True, run many steps per tick and skip visual rendering
+training_batch_steps = 250   # Steps processed per loop tick while training mode is active
+training_step_increment = 5000  # How many steps to add when extending training
+
+NORMAL_STEP_MIN = 10
+NORMAL_STEP_MAX = 2000
+NORMAL_STEP_RES = 10
+TRAIN_STEP_MIN = 100
+TRAIN_STEP_MAX = 1000000
+TRAIN_STEP_RES = 100
 
 # history stores past states so the "-1 Step" button can rewind
 # Each entry is a snapshot: (list of positions, list of velocities)
@@ -286,8 +296,12 @@ history            = []
 pursuer_wins       = 0   # How many times pursuers caught the evader
 evader_wins        = 0   # How many times the evader reached the goal
 wins_over_time     = [(0, 0)]  # (step_count, pursuer_wins) points used for graphing
+evader_wins_over_time = [(0, 0)]
 compare_pursuer_wins = 0
 compare_wins_over_time = [(0, 0)]
+compare_evader_wins = 0
+compare_evader_wins_over_time = [(0, 0)]
+graph_show_evader_wins = False
 
 # These values come from the sliders.
 # They are applied to the simulation when "Start New Session" is clicked.
@@ -306,6 +320,7 @@ active_step_fn  = None   # The step() function from the algorithm — advances s
 active_module   = None   # Loaded algorithm module (used for optional extra info sections)
 compare_env     = None   # Comparison environment (not shown on canvas)
 compare_step_fn = None   # Comparison step function
+training_controls_widgets = []  # Widgets enabled only when training mode is on
 
 
 # =============================================================================
@@ -477,8 +492,12 @@ def restore_state():
     # Remove graph points that are ahead of the restored step.
     while len(wins_over_time) > 1 and wins_over_time[-1][0] > step_count:
         wins_over_time.pop()
+    while len(evader_wins_over_time) > 1 and evader_wins_over_time[-1][0] > step_count:
+        evader_wins_over_time.pop()
     while len(compare_wins_over_time) > 1 and compare_wins_over_time[-1][0] > step_count:
         compare_wins_over_time.pop()
+    while len(compare_evader_wins_over_time) > 1 and compare_evader_wins_over_time[-1][0] > step_count:
+        compare_evader_wins_over_time.pop()
 
 
 # =============================================================================
@@ -504,32 +523,43 @@ def apply_winner_and_reset(winner):
 
 def apply_compare_winner_and_reset(winner):
     """Update win count for comparison simulation and reset it on terminal states."""
-    global compare_pursuer_wins
+    global compare_pursuer_wins, compare_evader_wins
     if compare_env is None:
         return
     if winner == "pursuers_win":
         compare_pursuer_wins += 1
         compare_env.reset()
     elif winner == "evader_win":
+        compare_evader_wins += 1
         compare_env.reset()
 
 
 def record_wins_point():
-    """Record the current (step, pursuer_wins) point for graph plotting."""
+    """Record current graph points for both pursuer and evader wins."""
     if wins_over_time and wins_over_time[-1][0] == step_count:
         wins_over_time[-1] = (step_count, pursuer_wins)
     else:
         wins_over_time.append((step_count, pursuer_wins))
 
+    if evader_wins_over_time and evader_wins_over_time[-1][0] == step_count:
+        evader_wins_over_time[-1] = (step_count, evader_wins)
+    else:
+        evader_wins_over_time.append((step_count, evader_wins))
+
 
 def record_compare_wins_point():
-    """Record the current (step, compare_pursuer_wins) graph point."""
+    """Record compare graph points for both pursuer and evader wins."""
     if compare_step_fn is None or compare_env is None:
         return
     if compare_wins_over_time and compare_wins_over_time[-1][0] == step_count:
         compare_wins_over_time[-1] = (step_count, compare_pursuer_wins)
     else:
         compare_wins_over_time.append((step_count, compare_pursuer_wins))
+
+    if compare_evader_wins_over_time and compare_evader_wins_over_time[-1][0] == step_count:
+        compare_evader_wins_over_time[-1] = (step_count, compare_evader_wins)
+    else:
+        compare_evader_wins_over_time.append((step_count, compare_evader_wins))
 
 
 # =============================================================================
@@ -565,6 +595,29 @@ def draw_simulation():
     so resizing the window makes the simulation area bigger or smaller.
     """
     canvas.delete("all")   # Remove everything drawn in the previous frame
+
+    if training_mode:
+        canvas_w = max(canvas.winfo_width(), 120)
+        canvas_h = max(canvas.winfo_height(), 120)
+        canvas.create_text(
+            canvas_w / 2,
+            canvas_h / 2 - 10,
+            text="The model is training" if running else "Training mode enabled",
+            fill=ACCENT,
+            font=("Segoe UI", 24, "bold"),
+        )
+        canvas.create_text(
+            canvas_w / 2,
+            canvas_h / 2 + 22,
+            text=(
+                f"Steps per batch: {training_batch_steps}"
+                if running
+                else "Press Play to start training"
+            ),
+            fill=MUTED,
+            font=("Segoe UI", 11),
+        )
+        return
 
     if active_world is None:
         return   # No algorithm loaded yet — nothing to draw
@@ -652,14 +705,28 @@ def refresh_info_panel():
     # Group related values into sections so the panel is easier to scan.
     lines = [
         "=== SESSION ===",
-        f"Algorithm      : {selected_algorithm.get()}",
-        f"Compare algo   : {selected_compare_algorithm.get() or 'None'}",
+        "-- MODE --",
         f"Status         : {status_text.get()}",
+        f"Training mode  : {'ON' if training_mode else 'OFF'}",
+        f"Graph metric   : {'Evader wins' if graph_show_evader_wins else 'Pursuer wins'}",
+        "",
+        "-- ALGORITHMS --",
+        f"Primary        : {selected_algorithm.get()}",
+        f"Compare        : {selected_compare_algorithm.get() or 'None'}",
+        "",
+        "-- PROGRESS --",
         f"Step           : {step_count}",
         f"Step limit     : {simulation_step_limit}",
+        "",
+        "-- TRAINING --",
+        f"Train batch    : {training_batch_steps}",
+        f"Step increment : {training_step_increment}",
+        "",
+        "-- OUTCOMES --",
         f"Pursuers wins  : {pursuer_wins}",
-        f"Compare wins   : {compare_pursuer_wins}",
         f"Evader wins    : {evader_wins}",
+        f"Compare pursuer: {compare_pursuer_wins}",
+        f"Compare evader : {compare_evader_wins}",
         "",
         "=== CONFIGURATION ===",
         f"Grid           : {w:.0f} x {h:.0f}",
@@ -769,7 +836,8 @@ def load_backend():
     """
     global active_env, active_world, active_step_fn, active_module
     global running, step_count, pursuer_wins, evader_wins, history, wins_over_time
-    global compare_pursuer_wins, compare_wins_over_time
+    global evader_wins_over_time, compare_pursuer_wins, compare_wins_over_time
+    global compare_evader_wins, compare_evader_wins_over_time
 
     name = selected_algorithm.get().strip()
     if not name:
@@ -802,8 +870,11 @@ def load_backend():
         evader_wins  = 0
         history      = []
         wins_over_time = [(0, 0)]
+        evader_wins_over_time = [(0, 0)]
         compare_pursuer_wins = 0
         compare_wins_over_time = [(0, 0)]
+        compare_evader_wins = 0
+        compare_evader_wins_over_time = [(0, 0)]
         if compare_env is not None:
             if hasattr(compare_env, "configure"):
                 compare_env.configure(
@@ -830,12 +901,15 @@ def load_backend():
 def load_compare_backend():
     """Load second algorithm used only for graph comparison metrics."""
     global compare_env, compare_step_fn, compare_pursuer_wins, compare_wins_over_time
+    global compare_evader_wins, compare_evader_wins_over_time
     name = selected_compare_algorithm.get().strip()
     if not name:
         compare_env = None
         compare_step_fn = None
         compare_pursuer_wins = 0
         compare_wins_over_time = [(0, 0)]
+        compare_evader_wins = 0
+        compare_evader_wins_over_time = [(0, 0)]
         status_text.set("Comparison disabled")
         refresh_info_panel()
         return
@@ -856,6 +930,8 @@ def load_compare_backend():
         compare_env.reset()
         compare_pursuer_wins = 0
         compare_wins_over_time = [(0, 0)]
+        compare_evader_wins = 0
+        compare_evader_wins_over_time = [(0, 0)]
         status_text.set("Loaded + compare ready")
     except Exception as ex:
         compare_env = None
@@ -871,11 +947,94 @@ def play():
     """Start running the simulation automatically (steps repeat on a timer)."""
     global running
     running = True
+    if training_mode:
+        status_text.set("Training...")
+    else:
+        status_text.set("Running")
 
 def pause():
     """Stop automatic playback.  The simulation keeps its current state."""
     global running
     running = False
+    status_text.set("Paused")
+
+
+def toggle_training_mode():
+    """Enable/disable fast non-visual training mode."""
+    global training_mode
+    training_mode = not training_mode
+    update_step_limit_slider_range()
+    set_training_controls_enabled(training_mode)
+    if running:
+        status_text.set("Training..." if training_mode else "Running")
+    else:
+        status_text.set("Training mode enabled" if training_mode else "Training mode disabled")
+    refresh_info_panel()
+
+
+def add_training_steps():
+    """Increase max-step limit so training can continue longer."""
+    global simulation_step_limit
+    if not training_mode:
+        status_text.set("Enable training mode first")
+        refresh_info_panel()
+        return
+
+    before = int(simulation_step_limit)
+    after = min(TRAIN_STEP_MAX, before + int(training_step_increment))
+    simulation_step_limit = after
+
+    # Keep UI slider in sync with the actual applied value.
+    step_limit_slider.set(simulation_step_limit)
+
+    added = after - before
+    if added <= 0:
+        status_text.set(f"Already at max training steps ({TRAIN_STEP_MAX})")
+    else:
+        status_text.set(f"Added {added} training steps")
+    refresh_info_panel()
+
+
+def set_training_target_steps(target_steps):
+    """Set max-step limit directly to a long-training target."""
+    global simulation_step_limit
+    if not training_mode:
+        status_text.set("Enable training mode first")
+        refresh_info_panel()
+        return
+    simulation_step_limit = int(target_steps)
+    step_limit_slider.set(simulation_step_limit)
+    status_text.set(f"Training target set to {simulation_step_limit} steps")
+    refresh_info_panel()
+
+
+def set_training_controls_enabled(enabled):
+    """Enable/disable controls that should only be usable in training mode."""
+    state = "normal" if enabled else "disabled"
+    for widget in training_controls_widgets:
+        try:
+            widget.configure(state=state)
+        except Exception:
+            pass
+
+
+def update_step_limit_slider_range():
+    """Use normal step range outside training mode and large range during training."""
+    global simulation_step_limit
+    if training_mode:
+        step_limit_slider.configure(from_=TRAIN_STEP_MIN, to=TRAIN_STEP_MAX, resolution=TRAIN_STEP_RES)
+        if simulation_step_limit < TRAIN_STEP_MIN:
+            step_limit_slider.set(TRAIN_STEP_MIN)
+        else:
+            step_limit_slider.set(simulation_step_limit)
+        return
+
+    step_limit_slider.configure(from_=NORMAL_STEP_MIN, to=NORMAL_STEP_MAX, resolution=NORMAL_STEP_RES)
+    capped_limit = min(simulation_step_limit, NORMAL_STEP_MAX)
+    if capped_limit != simulation_step_limit:
+        # Keep normal sessions bounded to the regular UI range.
+        simulation_step_limit = capped_limit
+    step_limit_slider.set(max(NORMAL_STEP_MIN, capped_limit))
 
 def new_session():
     """
@@ -892,7 +1051,8 @@ def new_session():
       4. Clear the history and win counters.
     """
     global running, step_count, pursuer_wins, evader_wins, wins_over_time
-    global compare_pursuer_wins, compare_wins_over_time
+    global evader_wins_over_time, compare_pursuer_wins, compare_wins_over_time
+    global compare_evader_wins, compare_evader_wins_over_time
     if active_env is None:
         return   # No algorithm loaded — nothing to reset
 
@@ -913,8 +1073,11 @@ def new_session():
     pursuer_wins = 0
     evader_wins = 0
     wins_over_time = [(0, 0)]
+    evader_wins_over_time = [(0, 0)]
     compare_pursuer_wins = 0
     compare_wins_over_time = [(0, 0)]
+    compare_evader_wins = 0
+    compare_evader_wins_over_time = [(0, 0)]
     if compare_env is not None:
         if hasattr(compare_env, "configure"):
             compare_env.configure(
@@ -989,6 +1152,20 @@ def set_step_limit(value):
     simulation_step_limit = int(float(value))
     refresh_info_panel()
 
+
+def set_training_batch(value):
+    """Update how many steps to process per loop tick in training mode."""
+    global training_batch_steps
+    training_batch_steps = int(float(value))
+    refresh_info_panel()
+
+
+def set_training_step_increment(value):
+    """Update how many steps are added when pressing Add Training Steps."""
+    global training_step_increment
+    training_step_increment = int(float(value))
+    refresh_info_panel()
+
 def set_pursuer_count(value):
     """Update the number of pursuers (takes effect on next new session)."""
     global pursuer_count
@@ -1055,9 +1232,13 @@ def refresh_algorithms_dropdown():
 
 
 def show_pursuer_wins_graph():
-    """Open a new window showing pursuer wins as a function of step count."""
+    """Open a graph window for the selected win metric over step count."""
+    metric_name = "Evader Wins" if graph_show_evader_wins else "Pursuer Wins"
+    primary_series = evader_wins_over_time if graph_show_evader_wins else wins_over_time
+    compare_series = compare_evader_wins_over_time if graph_show_evader_wins else compare_wins_over_time
+
     graph_window = tk.Toplevel(root)
-    graph_window.title("Pursuer Wins Over Steps (Comparison)")
+    graph_window.title(f"{metric_name} Over Steps (Comparison)")
     graph_window.geometry("760x460")
     graph_window.configure(bg=BG)
 
@@ -1080,7 +1261,7 @@ def show_pursuer_wins_graph():
     graph_canvas.create_text(
         width / 2,
         12,
-        text="Pursuer Wins vs Step Count (Primary vs Compare)",
+        text=f"{metric_name} vs Step Count (Primary vs Compare)",
         fill=TEXT,
         font=("Segoe UI", 11, "bold"),
         anchor="n",
@@ -1092,13 +1273,13 @@ def show_pursuer_wins_graph():
 
     max_step = max(
         simulation_step_limit,
-        max((point[0] for point in wins_over_time), default=0),
-        max((point[0] for point in compare_wins_over_time), default=0),
+        max((point[0] for point in primary_series), default=0),
+        max((point[0] for point in compare_series), default=0),
         1,
     )
     max_wins = max(
-        max((point[1] for point in wins_over_time), default=0),
-        max((point[1] for point in compare_wins_over_time), default=0),
+        max((point[1] for point in primary_series), default=0),
+        max((point[1] for point in compare_series), default=0),
         1,
     )
 
@@ -1118,12 +1299,12 @@ def show_pursuer_wins_graph():
         graph_canvas.create_text(plot_x0 - 10, y, text=str(win_label), fill=MUTED, font=("Segoe UI", 8), anchor="e")
 
     graph_canvas.create_text((plot_x0 + plot_x1) / 2, height - 12, text="Step", fill=TEXT, font=("Segoe UI", 9))
-    graph_canvas.create_text(14, (plot_y0 + plot_y1) / 2, text="Pursuer Wins", fill=TEXT, font=("Segoe UI", 9), angle=90)
+    graph_canvas.create_text(14, (plot_y0 + plot_y1) / 2, text=metric_name, fill=TEXT, font=("Segoe UI", 9), angle=90)
 
     # Plot primary algorithm line
-    if wins_over_time:
+    if primary_series:
         points = []
-        for step_value, wins_value in wins_over_time:
+        for step_value, wins_value in primary_series:
             x = plot_x0 + (step_value / max_step) * (plot_x1 - plot_x0)
             y = plot_y1 - (wins_value / max_wins) * (plot_y1 - plot_y0)
             points.extend([x, y])
@@ -1133,9 +1314,9 @@ def show_pursuer_wins_graph():
             graph_canvas.create_oval(points[i] - 2, points[i + 1] - 2, points[i] + 2, points[i + 1] + 2, fill=ACCENT, outline="")
 
     # Plot comparison algorithm line
-    if compare_step_fn is not None and compare_env is not None and compare_wins_over_time:
+    if compare_step_fn is not None and compare_env is not None and compare_series:
         compare_points = []
-        for step_value, wins_value in compare_wins_over_time:
+        for step_value, wins_value in compare_series:
             x = plot_x0 + (step_value / max_step) * (plot_x1 - plot_x0)
             y = plot_y1 - (wins_value / max_wins) * (plot_y1 - plot_y0)
             compare_points.extend([x, y])
@@ -1166,6 +1347,15 @@ def show_pursuer_wins_graph():
     graph_canvas.create_line(plot_x1 - 170, legend_y + 16, plot_x1 - 140, legend_y + 16, fill="#FF6B6B", width=2)
     compare_name = selected_compare_algorithm.get() or "None"
     graph_canvas.create_text(plot_x1 - 135, legend_y + 16, text=f"Compare: {compare_name}", fill=TEXT, anchor="w", font=("Segoe UI", 8))
+
+
+def toggle_graph_metric():
+    """Switch graph metric between pursuer wins and evader wins."""
+    global graph_show_evader_wins
+    graph_show_evader_wins = not graph_show_evader_wins
+    metric_label = "Evader wins" if graph_show_evader_wins else "Pursuer wins"
+    status_text.set(f"Graph metric: {metric_label}")
+    refresh_info_panel()
 
 
 # =============================================================================
@@ -1251,11 +1441,125 @@ tk.Label(controls_frame, textvariable=status_text,
 make_button(controls_frame, "Play",              play)
 make_button(controls_frame, "Pause",             pause)
 make_button(controls_frame, "Start New Session", new_session)
+make_button(controls_frame, "Toggle Training Mode", toggle_training_mode)
 
 # --- Sliders -----------------------------------------------------------------
 # Step Delay: how long between automatic steps (drag left = faster, right = slower)
 make_slider(controls_frame, "Step Delay (s)",    0.5,  0.01, 0.01, step_delay_seconds, set_step_delay)
-make_slider(controls_frame, "Max Steps",            10, 20000, 10,   simulation_step_limit, set_step_limit)
+step_limit_slider = make_slider(controls_frame, "Max Steps",            NORMAL_STEP_MIN, NORMAL_STEP_MAX, NORMAL_STEP_RES,   simulation_step_limit, set_step_limit)
+
+# Group training-only controls together for cleaner UI.
+training_frame = tk.LabelFrame(
+    controls_frame,
+    text=" Training Mode ",
+    bg=PANEL_BG,
+    fg=MUTED,
+    font=("Segoe UI", 10, "bold"),
+    bd=1,
+    relief="solid",
+)
+training_frame.pack(fill="x", padx=10, pady=(6, 10))
+
+tk.Label(
+    training_frame,
+    text="Enable training mode to unlock these controls",
+    bg=PANEL_BG,
+    fg=MUTED,
+    anchor="w",
+).pack(fill="x", padx=10, pady=(8, 6))
+
+training_targets_row1 = tk.Frame(training_frame, bg=PANEL_BG)
+training_targets_row1.pack(fill="x", padx=10, pady=(0, 6))
+training_targets_row2 = tk.Frame(training_frame, bg=PANEL_BG)
+training_targets_row2.pack(fill="x", padx=10, pady=(0, 6))
+
+target_50k_button = tk.Button(
+    training_targets_row1,
+    text="50k",
+    command=lambda: set_training_target_steps(50000),
+    bg=BUTTON_BG,
+    fg=TEXT,
+    activebackground=BUTTON_ACTIVE,
+    activeforeground=TEXT,
+    relief="flat",
+    bd=0,
+    padx=8,
+)
+target_50k_button.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+target_200k_button = tk.Button(
+    training_targets_row1,
+    text="200k",
+    command=lambda: set_training_target_steps(200000),
+    bg=BUTTON_BG,
+    fg=TEXT,
+    activebackground=BUTTON_ACTIVE,
+    activeforeground=TEXT,
+    relief="flat",
+    bd=0,
+    padx=8,
+)
+target_200k_button.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+target_500k_button = tk.Button(
+    training_targets_row1,
+    text="500k",
+    command=lambda: set_training_target_steps(500000),
+    bg=BUTTON_BG,
+    fg=TEXT,
+    activebackground=BUTTON_ACTIVE,
+    activeforeground=TEXT,
+    relief="flat",
+    bd=0,
+    padx=8,
+)
+target_500k_button.pack(side="left", fill="x", expand=True)
+
+target_1m_button = tk.Button(
+    training_targets_row2,
+    text="1M",
+    command=lambda: set_training_target_steps(1000000),
+    bg=BUTTON_BG,
+    fg=TEXT,
+    activebackground=BUTTON_ACTIVE,
+    activeforeground=TEXT,
+    relief="flat",
+    bd=0,
+    padx=8,
+)
+target_1m_button.pack(side="left", fill="x", expand=True)
+
+add_training_steps_button = make_button(training_frame, "Add Training Steps", add_training_steps, pady=(4, 8))
+training_batch_slider = make_slider(
+    training_frame,
+    "Training Batch Steps",
+    10,
+    50000,
+    50,
+    training_batch_steps,
+    set_training_batch,
+)
+training_step_add_slider = make_slider(
+    training_frame,
+    "Training Step Add",
+    100,
+    50000,
+    100,
+    training_step_increment,
+    set_training_step_increment,
+)
+
+training_controls_widgets.extend([
+    target_50k_button,
+    target_200k_button,
+    target_500k_button,
+    target_1m_button,
+    add_training_steps_button,
+    training_batch_slider,
+    training_step_add_slider,
+])
+set_training_controls_enabled(training_mode)
+update_step_limit_slider_range()
 
 # Agent configuration sliders (speed sliders apply live; others need new session)
 pursuer_count_slider = make_slider(controls_frame, "Number of Pursuers", 1, 12,  1,    pursuer_count, set_pursuer_count)
@@ -1269,7 +1573,8 @@ grid_height_slider = make_slider(controls_frame, "Grid Height", 1, 40, 1, grid_h
 # --- Manual step buttons -----------------------------------------------------
 make_button(controls_frame, "+1 Step", step_forward)
 make_button(controls_frame, "-1 Step", step_backward)
-make_button(controls_frame, "Show Pursuer Wins Graph", show_pursuer_wins_graph)
+make_button(controls_frame, "Toggle Graph Metric", toggle_graph_metric)
+make_button(controls_frame, "Show Wins Graph", show_pursuer_wins_graph)
 
 
 # =============================================================================
@@ -1303,15 +1608,40 @@ def loop():
             refresh_info_panel()
             root.after(100, loop)
             return
-        apply_winner_and_reset(active_step_fn(active_env))
-        if compare_step_fn is not None and compare_env is not None:
-            apply_compare_winner_and_reset(compare_step_fn(compare_env))
-        step_count += 1
-        record_wins_point()
-        record_compare_wins_point()
-        save_state()
-        refresh_info_panel()
-        root.after(int(step_delay_seconds * 1000), loop)   # Schedule next step
+
+        if training_mode:
+            status_text.set("Training...")
+            remaining = simulation_step_limit - step_count
+            batch_count = max(1, min(training_batch_steps, remaining))
+
+            for _ in range(batch_count):
+                apply_winner_and_reset(active_step_fn(active_env))
+                if compare_step_fn is not None and compare_env is not None:
+                    apply_compare_winner_and_reset(compare_step_fn(compare_env))
+                step_count += 1
+
+            record_wins_point()
+            record_compare_wins_point()
+            refresh_info_panel()
+
+            if step_count >= simulation_step_limit:
+                pause()
+                status_text.set("Step limit reached")
+                refresh_info_panel()
+                root.after(100, loop)
+                return
+
+            root.after(1, loop)
+        else:
+            apply_winner_and_reset(active_step_fn(active_env))
+            if compare_step_fn is not None and compare_env is not None:
+                apply_compare_winner_and_reset(compare_step_fn(compare_env))
+            step_count += 1
+            record_wins_point()
+            record_compare_wins_point()
+            save_state()
+            refresh_info_panel()
+            root.after(int(step_delay_seconds * 1000), loop)   # Schedule next step
     else:
         root.after(100, loop)   # Idle: check again in 100 ms
 
