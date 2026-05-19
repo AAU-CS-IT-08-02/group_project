@@ -6,11 +6,7 @@ GRID_SIZE = 8                                   #grid size (8x8)
 ACTIONS = ["UP", "DOWN", "LEFT", "RIGHT"]
 
 
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
-
-def get_distance(p1, p2):
+def get_distance(p1, p2):           #helper function 
     """
     Manhattan distance
     """
@@ -41,12 +37,7 @@ def move(position, action):
 
     return (x, y)
 
-
-# ==========================================
-# REWARD FUNCTION
-# ==========================================
-
-def compute_reward(dist_before, dist_after, caught):
+def compute_reward(dist_before, dist_after, caught):           # REWARD FUNCTION
     """
     Reward shaping
     """
@@ -58,11 +49,7 @@ def compute_reward(dist_before, dist_after, caught):
     return (dist_before - dist_after) * 2 - 1
 
 
-# ==========================================
-# ENVIRONMENT STEP FUNCTION
-# ==========================================
-
-def step_env(state, action):
+def step_env(state, action):                           # ENVIRONMENT STEP FUNCTION
     """
     State format:
     (
@@ -108,11 +95,7 @@ def step_env(state, action):
     return next_state, reward, caught
 
 
-# ==========================================
-# SARSA AGENT
-# ==========================================
-
-class SARSAAgent:
+class SARSAAgent:                                # SARSA AGENT
 
     def __init__(
         self,
@@ -163,11 +146,8 @@ class SARSAAgent:
         )
 
 
-# ==========================================
-# TRAINING
-# ==========================================
 
-agent = SARSAAgent()
+agent = SARSAAgent()                       # TRAINING
 
 episodes = 2000
 
@@ -231,11 +211,7 @@ for episode in range(episodes):
     )
 
 
-# ==========================================
-# TEST TRAINED AGENT
-# ==========================================
-
-print("\n===== TESTING TRAINED AGENT =====\n")
+print("\n===== TESTING TRAINED AGENT =====\n")              # TEST TRAINED AGENT
 
 state = (0, 0, GRID_SIZE - 1, GRID_SIZE - 1)
 
