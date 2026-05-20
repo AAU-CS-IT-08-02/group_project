@@ -17,14 +17,8 @@ class Config:
     seed: int = 42
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
-    world_size: float = 10.0
-    max_steps: int = 220
-
-    capture_radius: float = 0.60
-    goal_radius: float = 0.55
-
-    pursuer_speed: float = 0.38
-    evader_speed: float = 0.25
+    grid_size: int = 10
+    max_steps: int = 100
 
     total_episodes: int = 3000
     rollout_episodes: int = 20
@@ -37,20 +31,22 @@ class Config:
 
     actor_lr: float = 3e-4
     critic_lr: float = 3e-4
-    entropy_coef: float = 0.02
+    entropy_coef: float = 0.025
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
 
-    capture_reward: float = 25.0
-    evader_goal_penalty: float = 12.0
-    distance_reward_scale: float = 1.2
-    goal_progress_penalty_scale: float = 0.5
+    capture_reward: float = 35.0
+    evader_goal_penalty: float = 18.0
+    distance_reward_scale: float = 1.8
+    goal_progress_penalty_scale: float = 0.8
     step_penalty: float = 0.01
+
+    evader_random_prob: float = 0.25
 
     print_every: int = 20
     checkpoint_every: int = 50
-    save_dir: str = "checkpoints_single_balanced"
-    eval_episodes: int = 30
+    save_dir: str = "checkpoints_grid_ac"
+    eval_episodes: int = 50
 
 
 def set_seed(seed):
@@ -59,42 +55,22 @@ def set_seed(seed):
     torch.manual_seed(seed)
 
 
-def dist(a, b):
-    return float(np.linalg.norm(a - b))
+def manhattan(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
 
-def unit(v):
-    n = np.linalg.norm(v)
-    if n < 1e-8:
-        return np.zeros_like(v, dtype=np.float32)
-    return (v / n).astype(np.float32)
-
-
-def clip_pos(p, world_size):
-    return np.clip(p, 0.0, world_size)
-
-
-class SinglePursuitGoalEnv:
+class GridPursuitEnv:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.world_size = cfg.world_size
+        self.n = cfg.grid_size
 
-        self.action_vectors = np.array([
-            [0.0, 0.0],
-            [0.0, 1.0],
-            [0.0, -1.0],
-            [-1.0, 0.0],
-            [1.0, 0.0],
-            [-1.0, 1.0],
-            [1.0, 1.0],
-            [-1.0, -1.0],
-            [1.0, -1.0],
-        ], dtype=np.float32)
-
-        for i in range(len(self.action_vectors)):
-            n = np.linalg.norm(self.action_vectors[i])
-            if n > 1e-8:
-                self.action_vectors[i] /= n
+        self.actions = [
+            (0, 0),    # stay
+            (-1, 0),   # up
+            (1, 0),    # down
+            (0, -1),   # left
+            (0, 1),    # right
+        ]
 
         self.pursuer = None
         self.evader = None
@@ -104,105 +80,120 @@ class SinglePursuitGoalEnv:
     def reset(self):
         self.step_count = 0
 
-        self.pursuer = np.array([
-            np.random.uniform(2.5, 4.0),
-            np.random.uniform(2.5, 4.0)
-        ], dtype=np.float32)
+        self.pursuer = [
+            random.randint(3, 5),
+            random.randint(3, 5)
+        ]
 
-        self.evader = np.array([
-            np.random.uniform(5.5, 7.0),
-            np.random.uniform(4.5, 6.5)
-        ], dtype=np.float32)
+        self.evader = [
+            random.randint(5, 7),
+            random.randint(4, 6)
+        ]
 
-        self.goal = np.array([
-            np.random.uniform(8.5, 9.5),
-            np.random.uniform(8.5, 9.5)
-        ], dtype=np.float32)
+        self.goal = [
+            random.randint(8, 9),
+            random.randint(8, 9)
+        ]
+
+        while self.goal == self.evader or self.goal == self.pursuer:
+            self.goal = [
+                random.randint(8, 9),
+                random.randint(8, 9)
+            ]
 
         return self._get_obs()
 
     def _get_obs(self):
-        rel_evader = self.evader - self.pursuer
-        rel_goal = self.goal - self.pursuer
-        evader_to_goal = self.goal - self.evader
+        px, py = self.pursuer
+        ex, ey = self.evader
+        gx, gy = self.goal
+        denom = self.n - 1
 
         obs = np.array([
-            self.pursuer[0] / self.world_size,
-            self.pursuer[1] / self.world_size,
+            px / denom,
+            py / denom,
 
-            self.evader[0] / self.world_size,
-            self.evader[1] / self.world_size,
+            ex / denom,
+            ey / denom,
 
-            self.goal[0] / self.world_size,
-            self.goal[1] / self.world_size,
+            gx / denom,
+            gy / denom,
 
-            rel_evader[0] / self.world_size,
-            rel_evader[1] / self.world_size,
-            dist(self.pursuer, self.evader) / self.world_size,
+            (ex - px) / denom,
+            (ey - py) / denom,
+            manhattan(self.pursuer, self.evader) / (2 * denom),
 
-            rel_goal[0] / self.world_size,
-            rel_goal[1] / self.world_size,
+            (gx - px) / denom,
+            (gy - py) / denom,
 
-            evader_to_goal[0] / self.world_size,
-            evader_to_goal[1] / self.world_size,
-            dist(self.evader, self.goal) / self.world_size,
-
-            self.pursuer[0] / self.world_size,
-            (self.world_size - self.pursuer[0]) / self.world_size,
-            self.pursuer[1] / self.world_size,
-            (self.world_size - self.pursuer[1]) / self.world_size,
+            (gx - ex) / denom,
+            (gy - ey) / denom,
+            manhattan(self.evader, self.goal) / (2 * denom),
         ], dtype=np.float32)
 
         return obs
 
+    def _move(self, pos, action):
+        dx, dy = self.actions[action]
+        nx = min(max(pos[0] + dx, 0), self.n - 1)
+        ny = min(max(pos[1] + dy, 0), self.n - 1)
+        return [nx, ny]
+
     def _evader_policy(self):
-        to_goal = unit(self.goal - self.evader)
-        away_pursuer = unit(self.evader - self.pursuer)
+        if random.random() < self.cfg.evader_random_prob:
+            return random.randint(0, len(self.actions) - 1)
 
-        d = dist(self.evader, self.pursuer)
+        best_action = 0
+        best_score = -1e9
 
-        if d < 1.5:
-            move = 0.40 * to_goal + 0.60 * away_pursuer
-        else:
-            move = 0.70 * to_goal + 0.30 * away_pursuer
+        for a in range(len(self.actions)):
+            new_pos = self._move(self.evader, a)
 
-        move += np.random.uniform(-0.15, 0.15, size=(2,)).astype(np.float32)
-        return unit(move)
+            dist_goal = manhattan(new_pos, self.goal)
+            dist_pursuer = manhattan(new_pos, self.pursuer)
 
-    def step(self, action):
+            # goal seeking + avoidance
+            score = -0.80 * dist_goal + 0.20 * dist_pursuer
+
+            if score > best_score:
+                best_score = score
+                best_action = a
+
+        return best_action
+
+    def step(self, pursuer_action):
         self.step_count += 1
 
-        old_pursuer_evader_dist = dist(self.pursuer, self.evader)
-        old_evader_goal_dist = dist(self.evader, self.goal)
+        old_dist_evader = manhattan(self.pursuer, self.evader)
+        old_dist_goal = manhattan(self.evader, self.goal)
 
-        move = self.action_vectors[action] * self.cfg.pursuer_speed
-        self.pursuer = clip_pos(self.pursuer + move, self.world_size)
+        self.pursuer = self._move(self.pursuer, pursuer_action)
 
-        if dist(self.pursuer, self.evader) <= self.cfg.capture_radius:
+        if self.pursuer == self.evader:
             return self._get_obs(), self.cfg.capture_reward, True, {
                 "captured": True,
                 "evader_reached_goal": False,
                 "timeout": False,
             }
 
-        evader_move = self._evader_policy() * self.cfg.evader_speed
-        self.evader = clip_pos(self.evader + evader_move, self.world_size)
+        evader_action = self._evader_policy()
+        self.evader = self._move(self.evader, evader_action)
 
-        new_pursuer_evader_dist = dist(self.pursuer, self.evader)
-        new_evader_goal_dist = dist(self.evader, self.goal)
+        new_dist_evader = manhattan(self.pursuer, self.evader)
+        new_dist_goal = manhattan(self.evader, self.goal)
 
-        captured = new_pursuer_evader_dist <= self.cfg.capture_radius
-        evader_reached_goal = new_evader_goal_dist <= self.cfg.goal_radius
+        captured = self.pursuer == self.evader
+        evader_reached_goal = self.evader == self.goal
         timeout = self.step_count >= self.cfg.max_steps
 
         reward = -self.cfg.step_penalty
 
         reward += self.cfg.distance_reward_scale * (
-            old_pursuer_evader_dist - new_pursuer_evader_dist
+            old_dist_evader - new_dist_evader
         )
 
         reward -= self.cfg.goal_progress_penalty_scale * (
-            old_evader_goal_dist - new_evader_goal_dist
+            old_dist_goal - new_dist_goal
         )
 
         if captured:
@@ -219,16 +210,32 @@ class SinglePursuitGoalEnv:
             "timeout": timeout,
         }
 
+    def render(self):
+        grid = [["." for _ in range(self.n)] for _ in range(self.n)]
+
+        gx, gy = self.goal
+        ex, ey = self.evader
+        px, py = self.pursuer
+
+        grid[gx][gy] = "G"
+        grid[ex][ey] = "E"
+        grid[px][py] = "P"
+
+        print()
+        for row in grid:
+            print(" ".join(row))
+        print()
+
 
 class Actor(nn.Module):
     def __init__(self, obs_dim, action_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(obs_dim, 256),
+            nn.Linear(obs_dim, 128),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(256, action_dim)
+            nn.Linear(128, action_dim)
         )
 
     def forward(self, x):
@@ -239,11 +246,11 @@ class Critic(nn.Module):
     def __init__(self, obs_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(obs_dim, 256),
+            nn.Linear(obs_dim, 128),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(256, 1)
+            nn.Linear(128, 1)
         )
 
     def forward(self, x):
@@ -277,17 +284,20 @@ class Agent:
         with torch.no_grad():
             logits = self.actor(obs_t)
             value = self.critic(obs_t)
-            distribution = Categorical(logits=logits)
-            action = distribution.sample()
-            log_prob = distribution.log_prob(action)
+            dist = Categorical(logits=logits)
+            action = dist.sample()
+            log_prob = dist.log_prob(action)
 
         return int(action.item()), float(log_prob.item()), float(value.item())
 
     def greedy_action(self, obs):
         obs_t = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+
         with torch.no_grad():
             logits = self.actor(obs_t)
-            return int(torch.argmax(logits, dim=-1).item())
+            action = torch.argmax(logits, dim=-1)
+
+        return int(action.item())
 
     def compute_gae(self, rewards, dones, values):
         advantages = []
@@ -307,7 +317,11 @@ class Agent:
         actions = torch.tensor(np.array(buffer.actions), dtype=torch.long, device=self.device)
         old_log_probs = torch.tensor(np.array(buffer.log_probs), dtype=torch.float32, device=self.device)
 
-        advantages, returns = self.compute_gae(buffer.rewards, buffer.dones, buffer.values)
+        advantages, returns = self.compute_gae(
+            buffer.rewards,
+            buffer.dones,
+            buffer.values
+        )
 
         advantages = torch.tensor(np.array(advantages), dtype=torch.float32, device=self.device)
         returns = torch.tensor(np.array(returns), dtype=torch.float32, device=self.device)
@@ -325,10 +339,10 @@ class Agent:
                 mb = idxs[start:end]
 
                 logits = self.actor(obs[mb])
-                distribution = Categorical(logits=logits)
+                dist = Categorical(logits=logits)
 
-                new_log_probs = distribution.log_prob(actions[mb])
-                entropy = distribution.entropy().mean()
+                new_log_probs = dist.log_prob(actions[mb])
+                entropy = dist.entropy().mean()
                 values_pred = self.critic(obs[mb]).squeeze(-1)
 
                 ratio = torch.exp(new_log_probs - old_log_probs[mb])
@@ -375,6 +389,7 @@ def save_checkpoint(agent, cfg, episode, filename):
 
 def load_checkpoint(agent, path, device):
     checkpoint = torch.load(path, map_location=device)
+
     agent.actor.load_state_dict(checkpoint["actor"])
     agent.critic.load_state_dict(checkpoint["critic"])
 
@@ -391,9 +406,9 @@ def train(resume_path=None):
     cfg = Config()
     set_seed(cfg.seed)
 
-    env = SinglePursuitGoalEnv(cfg)
+    env = GridPursuitEnv(cfg)
     obs_dim = len(env.reset())
-    action_dim = len(env.action_vectors)
+    action_dim = len(env.actions)
 
     agent = Agent(obs_dim, action_dim, cfg)
 
@@ -459,12 +474,12 @@ def train(resume_path=None):
     print("Training finished.")
 
 
-def evaluate(checkpoint_path):
+def evaluate(checkpoint_path, render=False):
     cfg = Config()
-    env = SinglePursuitGoalEnv(cfg)
+    env = GridPursuitEnv(cfg)
 
     obs_dim = len(env.reset())
-    action_dim = len(env.action_vectors)
+    action_dim = len(env.actions)
 
     agent = Agent(obs_dim, action_dim, cfg)
     load_checkpoint(agent, checkpoint_path, cfg.device)
@@ -478,9 +493,16 @@ def evaluate(checkpoint_path):
         done = False
         info = None
 
+        if render:
+            print(f"\nEpisode {ep + 1}")
+            env.render()
+
         while not done:
             action = agent.greedy_action(obs)
             obs, reward, done, info = env.step(action)
+
+            if render:
+                env.render()
 
         if info["captured"]:
             captures += 1
@@ -499,13 +521,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", type=str, default="train", choices=["train", "eval"])
     parser.add_argument("--resume", type=str, default=None)
-    parser.add_argument("--checkpoint", type=str, default="checkpoints_single_balanced/checkpoint_latest.pt")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints_grid_ac/checkpoint_latest.pt")
+    parser.add_argument("--render", action="store_true")
     args = parser.parse_args()
 
     if args.mode == "train":
         train(args.resume)
     else:
-        evaluate(args.checkpoint)
+        evaluate(args.checkpoint, render=args.render)
 
 
 if __name__ == "__main__":
