@@ -225,6 +225,133 @@ class MyAgentTemplate(BaseAgent):
         # ── Add any other per-episode resets below ─────────────────────
 
     # ------------------------------------------------------------------
+    # OPTIONAL — custom reward function
+    # ------------------------------------------------------------------
+
+    def get_reward(
+        self,
+        role: str,
+        prev_agent_dist: int,
+        curr_agent_dist: int,
+        prev_evader_goal_dist: int,
+        curr_evader_goal_dist: int,
+        pursuer_wins: bool,
+        evader_wins: bool,
+    ) -> float:
+        """
+        Define your own reward function.
+
+        If you implement this method, the game will call it every step
+        instead of using the built-in reward values. If you leave it
+        out (or do not override it), the default rewards are used.
+
+        Both agents are checked independently — your pursuer can have
+        a custom reward while the evader uses the default, or vice versa.
+
+        Parameters
+        ----------
+        role
+            Which agent is being rewarded right now — "pursuer" or
+            "evader". Useful if both agents share one file.
+
+        prev_agent_dist
+            How far apart the two agents were BEFORE this step.
+            Measured in Manhattan distance (no diagonals).
+
+        curr_agent_dist
+            How far apart the two agents are AFTER this step.
+            If this is less than prev_agent_dist, the pursuer moved
+            closer. If more, the evader escaped further.
+
+        prev_evader_goal_dist
+            How far the evader was from the goal tile BEFORE this step.
+
+        curr_evader_goal_dist
+            How far the evader is from the goal tile AFTER this step.
+            If this is less than prev_evader_goal_dist, the evader
+            moved toward the goal.
+
+        pursuer_wins
+            True if the pursuer just captured the evader (same tile).
+            This is a terminal event — the episode ends after this step.
+
+        evader_wins
+            True if the evader just reached the goal tile.
+            Also terminal.
+
+        Returns
+        -------
+        float
+            The reward to give this agent for this step.
+
+        ── Examples ──────────────────────────────────────────────────
+
+        1. Sparse reward only (no shaping — harder to learn but clean)
+        ---------------------------------------------------------------
+        def get_reward(self, role, prev_agent_dist, curr_agent_dist,
+                       prev_evader_goal_dist, curr_evader_goal_dist,
+                       pursuer_wins, evader_wins):
+            if role == "pursuer":
+                if pursuer_wins: return 1.0
+                if evader_wins:  return -1.0
+                return 0.0
+            else:
+                if evader_wins:  return 1.0
+                if pursuer_wins: return -1.0
+                return 0.0
+
+        2. Distance-only shaping (no time penalty)
+        ---------------------------------------------------------------
+        def get_reward(self, role, prev_agent_dist, curr_agent_dist,
+                       prev_evader_goal_dist, curr_evader_goal_dist,
+                       pursuer_wins, evader_wins):
+            if role == "pursuer":
+                if pursuer_wins: return 10.0
+                if evader_wins:  return -10.0
+                # +1 for each tile closer, -1 for each tile further
+                return float(prev_agent_dist - curr_agent_dist)
+            else:
+                if evader_wins:  return 10.0
+                if pursuer_wins: return -10.0
+                # reward for increasing distance from pursuer AND closing on goal
+                escape = float(curr_agent_dist - prev_agent_dist)
+                goal   = float(prev_evader_goal_dist - curr_evader_goal_dist)
+                return escape + goal
+
+        3. Aggresive time pressure (large time penalty to force quick wins)
+        ---------------------------------------------------------------
+        def get_reward(self, role, prev_agent_dist, curr_agent_dist,
+                       prev_evader_goal_dist, curr_evader_goal_dist,
+                       pursuer_wins, evader_wins):
+            if role == "pursuer":
+                if pursuer_wins: return 10.0
+                if evader_wins:  return -10.0
+                return -1.0   # heavy penalty every step
+            else:
+                if evader_wins:  return 10.0
+                if pursuer_wins: return -10.0
+                return -1.0
+
+        ── Default reward (for reference) ────────────────────────────
+        The built-in reward used when get_reward() is NOT defined:
+
+        Pursuer:
+            +10.0  on capture
+            +0.5   each step closer to evader
+            -0.5   each step further from evader
+            -0.1   per step (time penalty)
+
+        Evader:
+            +10.0  on reaching goal
+            +0.5   each step further from pursuer
+            -0.5   each step closer to pursuer
+            +0.3   each step closer to goal
+            -0.3   each step further from goal
+            -0.1   per step (time penalty)
+        """
+        raise NotImplementedError   # remove this line when you implement it
+
+    # ------------------------------------------------------------------
     # OPTIONAL — save / load
     # ------------------------------------------------------------------
 

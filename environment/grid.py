@@ -10,6 +10,7 @@ Responsibilities:
   - Provides distance utilities used by reward and metrics
 """
 
+import random
 from dataclasses import dataclass, field
 from typing import Tuple
 
@@ -41,6 +42,8 @@ class GridConfig:
     pursuer_start  : Position = (0, 0)
     evader_start   : Position = (9, 9)
     goal_pos       : Position = (9, 0)
+    random_spawns  : bool     = False   # if True, randomise positions each episode
+    random_goal    : bool     = False   # if True, randomise goal tile each episode
 
     def __post_init__(self):
         self._validate()
@@ -83,9 +86,35 @@ class Grid:
     # ── Reset ──────────────────────────────────────────────────────────
 
     def reset(self) -> None:
-        """Reset both agents to their starting positions."""
-        self.pursuer_pos = self.config.pursuer_start
-        self.evader_pos  = self.config.evader_start
+        """
+        Reset both agents to their starting positions.
+
+        If random_spawns is enabled, agents are placed on random distinct
+        tiles every episode (neither on the goal tile).
+        If random_goal is enabled, the goal tile is also randomised.
+        """
+        size = self.grid_size
+
+        if self.config.random_goal:
+            self.goal_pos = (
+                random.randint(0, size - 1),
+                random.randint(0, size - 1),
+            )
+        else:
+            self.goal_pos = self.config.goal_pos
+
+        if self.config.random_spawns:
+            # Build a pool of all tiles except the goal, then sample 2
+            pool = [
+                (r, c)
+                for r in range(size)
+                for c in range(size)
+                if (r, c) != self.goal_pos
+            ]
+            self.pursuer_pos, self.evader_pos = random.sample(pool, 2)
+        else:
+            self.pursuer_pos = self.config.pursuer_start
+            self.evader_pos  = self.config.evader_start
 
     # ── Movement ───────────────────────────────────────────────────────
 

@@ -213,7 +213,7 @@ class Runner:
                 self._save_checkpoints(ep)
 
             # ── UI callback ────────────────────────────────────────────
-            if on_update and ep % self.config.live_update_interval == 0:
+            if on_update and (ep % self.config.live_update_interval == 0 or ep == n):
                 elapsed = time.time() - start_time
                 eta     = (elapsed / ep) * (n - ep) if ep > 0 else 0.0
 
@@ -258,7 +258,7 @@ class Runner:
         while not done:
             action_p = self.pursuer.select_action(obs_p)
             action_e = self.evader.select_action(obs_e)
-            result   = self.game.step(action_p, action_e)
+            result   = self.game.step(action_p, action_e, pursuer=self.pursuer, evader=self.evader)
 
             snapshots.append(result.grid_snapshot)
             obs_p = result.next_pursuer_obs
@@ -286,7 +286,7 @@ class Runner:
             action_e = self.evader.select_action(obs_e)
 
             # Step the game
-            result = self.game.step(action_p, action_e)
+            result = self.game.step(action_p, action_e, pursuer=self.pursuer, evader=self.evader)
 
             # Record metrics
             self.recorder.record_step(result)

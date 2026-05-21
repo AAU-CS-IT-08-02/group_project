@@ -118,3 +118,38 @@ class BaseAgent(ABC):
         ----------
         path : file path to load from
         """
+
+    def get_reward(
+        self,
+        role: str,
+        prev_agent_dist: int,
+        curr_agent_dist: int,
+        prev_evader_goal_dist: int,
+        curr_evader_goal_dist: int,
+        pursuer_wins: bool,
+        evader_wins: bool,
+    ) -> float:
+        """
+        Define a custom reward function for this agent.
+
+        Optional — if not overridden, the game falls back to the default
+        RewardConfig values defined in game.py.
+
+        Called once per step for each agent independently. Both agents
+        can define their own reward function in their own file.
+
+        Parameters
+        ----------
+        role                  : "pursuer" or "evader"
+        prev_agent_dist       : Manhattan distance between agents BEFORE this step
+        curr_agent_dist       : Manhattan distance AFTER this step
+        prev_evader_goal_dist : Evader distance to goal BEFORE this step
+        curr_evader_goal_dist : Evader distance to goal AFTER this step
+        pursuer_wins          : True if the pursuer captured the evader this step
+        evader_wins           : True if the evader reached the goal this step
+
+        Returns
+        -------
+        float : the reward for this agent on this step
+        """
+        raise NotImplementedError

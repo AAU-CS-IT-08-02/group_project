@@ -13,11 +13,12 @@ from pathlib import Path
 
 try:
     import matplotlib
-    matplotlib.use("TkAgg")
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    import io, base64
     HAS_MPL = True
 except ImportError:
     HAS_MPL = False
@@ -196,9 +197,7 @@ class ComparisonFrame(ttk.Frame):
         label_a = self._run_a_label.get() or "Run A"
         label_b = self._run_b_label.get() or "Run B"
 
-        fig = Figure(figsize=(11, 6), facecolor=self.P["bg"])
-        fig.subplots_adjust(left=0.07, right=0.97, top=0.90, bottom=0.1,
-                            wspace=0.35, hspace=0.45)
+        fig = Figure(facecolor=self.P["bg"], constrained_layout=True)
 
         ax1 = fig.add_subplot(2, 3, 1)
         ax2 = fig.add_subplot(2, 3, 2)
@@ -283,9 +282,43 @@ class ComparisonFrame(ttk.Frame):
         ax6.legend(fontsize=7)
         _style_ax(ax6, self.P)
 
-        canvas = FigureCanvasTkAgg(fig, master=self._chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True)
+        import tkinter as tk
+
+        tk_canvas = tk.Canvas(self._chart_frame,
+                              bg="#1a1d23",
+                              highlightthickness=0, bd=0)
+        tk_canvas.pack(fill="both", expand=True)
+
+        _photo_ref = [None]
+        _pending   = [None]
+        _last      = [0, 0]
+
+        def _render(w, h):
+            if w < 20 or h < 20:
+                return
+            dpi = fig.get_dpi() or 100
+            fig.set_size_inches(w / dpi, h / dpi, forward=False)
+            agg = FigureCanvasAgg(fig)
+            agg.draw()
+            buf = io.BytesIO()
+            agg.print_png(buf)
+            buf.seek(0)
+            b64   = base64.b64encode(buf.read()).decode()
+            photo = tk.PhotoImage(data=b64)
+            tk_canvas.delete("all")
+            tk_canvas.create_image(0, 0, anchor="nw", image=photo)
+            _photo_ref[0] = photo
+
+        def _on_configure(event):
+            w, h = event.width, event.height
+            if w == _last[0] and h == _last[1]:
+                return
+            _last[0], _last[1] = w, h
+            if _pending[0] is not None:
+                tk_canvas.after_cancel(_pending[0])
+            _pending[0] = tk_canvas.after(80, lambda: _render(w, h))
+
+        tk_canvas.bind("<Configure>", _on_configure)
 
     def _to_chart_data(self, metrics, tag: str) -> dict:
         """Convert a MetricsRecorder (or None) to a simple dict for charting."""

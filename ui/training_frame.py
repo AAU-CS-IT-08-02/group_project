@@ -17,16 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 # ── Optional matplotlib for embedded charts ───────────────────────────────────
-try:
-    import matplotlib
-    matplotlib.use("TkAgg")
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-    from matplotlib.figure import Figure
-    HAS_MPL = True
-except ImportError:
-    HAS_MPL = False
+HAS_MPL = False  # mini chart uses pure tkinter now
 
 
 class TrainingFrame(ttk.Frame):
@@ -55,6 +46,8 @@ class TrainingFrame(ttk.Frame):
         self._max_steps      = tk.IntVar(value=200)
         self._vis_enabled    = tk.BooleanVar(value=False)  # off during training
         self._vis_replay     = tk.BooleanVar(value=True)
+        self._random_spawns  = tk.BooleanVar(value=False)
+        self._random_goal    = tk.BooleanVar(value=False)
         self._update_freq    = tk.IntVar(value=50)
         self._replay_speed   = tk.IntVar(value=300)   # ms per step in replay
 
@@ -73,9 +66,9 @@ class TrainingFrame(ttk.Frame):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _build(self):
-        self.columnconfigure(0, weight=0, minsize=240)
-        self.columnconfigure(1, weight=1)
-        self.columnconfigure(2, weight=0, minsize=260)
+        self.columnconfigure(0, weight=2, minsize=200)
+        self.columnconfigure(1, weight=5)
+        self.columnconfigure(2, weight=2, minsize=200)
         self.rowconfigure(0, weight=1)
 
         self._build_left()
@@ -85,10 +78,38 @@ class TrainingFrame(ttk.Frame):
     # ── Left panel: live stats ────────────────────────────────────────────────
 
     def _build_left(self):
-        left = tk.Frame(self, bg=self.P["surface"],
-                        highlightbackground=self.P["border"],
-                        highlightthickness=1)
-        left.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
+        # Outer frame holds the scrollbar + canvas together
+        outer = tk.Frame(self, bg=self.P["surface"],
+                         highlightbackground=self.P["border"],
+                         highlightthickness=1)
+        outer.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+
+        _canvas = tk.Canvas(outer, bg=self.P["surface"],
+                            highlightthickness=0, bd=0)
+        _scrollbar = ttk.Scrollbar(outer, orient="vertical",
+                                   command=_canvas.yview)
+        _canvas.configure(yscrollcommand=_scrollbar.set)
+
+        _canvas.grid(row=0, column=0, sticky="nsew")
+        _scrollbar.grid(row=0, column=1, sticky="ns")
+
+        left = tk.Frame(_canvas, bg=self.P["surface"])
+        _win_id = _canvas.create_window((0, 0), window=left, anchor="nw")
+
+        def _on_frame_configure(e):
+            _canvas.configure(scrollregion=_canvas.bbox("all"))
+        def _on_canvas_configure(e):
+            _canvas.itemconfig(_win_id, width=e.width)
+        def _on_mousewheel(e):
+            _canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        left.bind("<Configure>", _on_frame_configure)
+        _canvas.bind("<Configure>", _on_canvas_configure)
+        _canvas.bind("<MouseWheel>", _on_mousewheel)
+        left.bind("<MouseWheel>", _on_mousewheel)
+
         left.columnconfigure(0, weight=1)
 
         _lbl(left, "Live Stats", style="header", P=self.P).pack(
@@ -145,16 +166,11 @@ class TrainingFrame(ttk.Frame):
 
         _divider(left, self.P).pack(fill="x", padx=14, pady=4)
 
-        # Reward mini-chart
-        if HAS_MPL:
-            self._reward_fig = Figure(
-                figsize=(2.6, 1.6), dpi=80,
-                facecolor=self.P["surface"])
-            self._reward_ax = self._reward_fig.add_subplot(111)
-            self._style_mini_ax(self._reward_ax)
-            canvas = FigureCanvasTkAgg(self._reward_fig, master=left)
-            canvas.get_tk_widget().pack(fill="x", padx=14, pady=(4, 14))
-            self._reward_canvas = canvas
+        # Reward mini-chart — pure tkinter, no matplotlib needed
+        self._reward_tk_canvas = tk.Canvas(
+            left, bg=self.P["surface"],
+            height=100, highlightthickness=0, bd=0)
+        self._reward_tk_canvas.pack(fill="x", padx=14, pady=(4, 14))
 
         # Status
         _divider(left, self.P).pack(fill="x", padx=14, pady=4)
@@ -239,10 +255,38 @@ class TrainingFrame(ttk.Frame):
     # ── Right panel: configuration ────────────────────────────────────────────
 
     def _build_right(self):
-        right = tk.Frame(self, bg=self.P["surface"],
-                         highlightbackground=self.P["border"],
-                         highlightthickness=1)
-        right.grid(row=0, column=2, sticky="nsew", padx=(4, 8), pady=8)
+        # Outer frame holds scrollbar + canvas
+        outer_r = tk.Frame(self, bg=self.P["surface"],
+                           highlightbackground=self.P["border"],
+                           highlightthickness=1)
+        outer_r.grid(row=0, column=2, sticky="nsew", padx=(4, 8), pady=8)
+        outer_r.columnconfigure(0, weight=1)
+        outer_r.rowconfigure(0, weight=1)
+
+        _rcanvas = tk.Canvas(outer_r, bg=self.P["surface"],
+                             highlightthickness=0, bd=0)
+        _rscroll = ttk.Scrollbar(outer_r, orient="vertical",
+                                 command=_rcanvas.yview)
+        _rcanvas.configure(yscrollcommand=_rscroll.set)
+
+        _rcanvas.grid(row=0, column=0, sticky="nsew")
+        _rscroll.grid(row=0, column=1, sticky="ns")
+
+        right = tk.Frame(_rcanvas, bg=self.P["surface"])
+        _rwin = _rcanvas.create_window((0, 0), window=right, anchor="nw")
+
+        def _r_frame_cfg(e):
+            _rcanvas.configure(scrollregion=_rcanvas.bbox("all"))
+        def _r_canvas_cfg(e):
+            _rcanvas.itemconfig(_rwin, width=e.width)
+        def _r_mwheel(e):
+            _rcanvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        right.bind("<Configure>", _r_frame_cfg)
+        _rcanvas.bind("<Configure>", _r_canvas_cfg)
+        _rcanvas.bind("<MouseWheel>", _r_mwheel)
+        right.bind("<MouseWheel>", _r_mwheel)
+
         right.columnconfigure(0, weight=1)
 
         _lbl(right, "Training Settings", style="header", P=self.P).pack(
@@ -321,6 +365,38 @@ class TrainingFrame(ttk.Frame):
                  fg=self.P["muted"], font=("Segoe UI", 9)).pack(side="left")
 
         _divider(right, self.P).pack(fill="x", padx=14, pady=16)
+
+        # ── Spawn settings ────────────────────────────────────────────────────
+        _lbl(right, "Spawn Settings", style="header", P=self.P).pack(
+            fill="x", padx=14, pady=(0, 2))
+
+        spawn_row = tk.Frame(right, bg=self.P["surface"])
+        spawn_row.pack(fill="x", padx=14, pady=4)
+        tk.Label(spawn_row, text="Random agent spawns",
+                 bg=self.P["surface"], fg=self.P["text"],
+                 font=("Segoe UI", 10)).pack(side="left")
+        ttk.Checkbutton(spawn_row, variable=self._random_spawns).pack(side="right")
+
+        tk.Label(right,
+                 text="Agents start at random tiles each episode.",
+                 bg=self.P["surface"], fg=self.P["muted"],
+                 font=("Segoe UI", 8), wraplength=0, justify="left").pack(
+            fill="x", padx=14, pady=(0, 6))
+
+        goal_row = tk.Frame(right, bg=self.P["surface"])
+        goal_row.pack(fill="x", padx=14, pady=4)
+        tk.Label(goal_row, text="Random goal tile",
+                 bg=self.P["surface"], fg=self.P["text"],
+                 font=("Segoe UI", 10)).pack(side="left")
+        ttk.Checkbutton(goal_row, variable=self._random_goal).pack(side="right")
+
+        tk.Label(right,
+                 text="Goal tile moves to a random position each episode.",
+                 bg=self.P["surface"], fg=self.P["muted"],
+                 font=("Segoe UI", 8), wraplength=0, justify="left").pack(
+            fill="x", padx=14, pady=(0, 8))
+
+        _divider(right, self.P).pack(fill="x", padx=14, pady=(0, 16))
 
         # ── Memory (Q-table / weights) ────────────────────────────────────────
         _lbl(right, "Agent Memory", style="header", P=self.P).pack(
@@ -425,24 +501,35 @@ class TrainingFrame(ttk.Frame):
             args=(pursuer_cls, evader_cls,
                   self._total_episodes.get(),
                   self._max_steps.get(),
-                  self._update_freq.get()),
+                  self._update_freq.get(),
+                  self._random_spawns.get(),
+                  self._random_goal.get()),
             daemon=True)
         self._training_thread.start()
 
         # Poll queue for updates
-        self.after(200, self._poll_stats)
+        self.after(50, self._poll_stats)
 
     def _train_worker(self, pursuer_cls, evader_cls,
-                      total_eps, max_steps, update_freq):
+                      total_eps, max_steps, update_freq,
+                      random_spawns=False, random_goal=False):
         """Runs in background thread. Posts stat dicts to self._stats_q."""
         try:
             from training.runner  import Runner, RunnerConfig
             from environment.game import Game, GameConfig
+            from environment.grid import GridConfig
 
             pursuer = pursuer_cls(role="pursuer", config={})
             evader  = evader_cls(role="evader",   config={})
 
-            game_config   = GameConfig(max_steps=max_steps)
+            grid_config = GridConfig(
+                random_spawns = random_spawns,
+                random_goal   = random_goal,
+            )
+            game_config = GameConfig(
+                grid_config = grid_config,
+                max_steps   = max_steps,
+            )
             runner_config = RunnerConfig(
                 n_episodes           = total_eps,
                 live_update_interval = update_freq,
@@ -490,6 +577,9 @@ class TrainingFrame(ttk.Frame):
                     "metrics_obj": None,   # not done yet
                 })
 
+                # Yield to main thread so it can process the update
+                time.sleep(0.05)
+
                 # Honour the stop button
                 if self._stop_flag.is_set():
                     runner.stop()
@@ -531,8 +621,29 @@ class TrainingFrame(ttk.Frame):
             })
 
         except ImportError:
-            # Backend not on sys.path yet — run a simulation for UI testing
+            # Backend not on sys.path — run simulation for UI testing
             self._simulate_training(total_eps, max_steps, update_freq)
+
+        except Exception as e:
+            import traceback
+            msg = f"Training error: {e}"
+            print(f"[_train_worker] {msg}")
+            traceback.print_exc()
+            # Push a done signal so the UI unlocks — never leave it frozen
+            self._stats_q.put({
+                "episode":    total_eps,
+                "total":      total_eps,
+                "pursuer_wr": 0.0,
+                "evader_wr":  0.0,
+                "avg_len":    0.0,
+                "p_reward":   0.0,
+                "e_reward":   0.0,
+                "eta":        0,
+                "done":       True,
+                "trajectory": [],
+                "metrics_obj": None,
+                "error":       msg,
+            })
 
     def _simulate_training(self, total_eps, max_steps, update_freq):
         """Fake training loop so the UI can be tested without the backend."""
@@ -587,68 +698,135 @@ class TrainingFrame(ttk.Frame):
     def _poll_stats(self):
         try:
             while True:
-                data = self._stats_q.get_nowait()
-                self._apply_stats(data)
-        except queue.Empty:
-            pass
+                try:
+                    data = self._stats_q.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._apply_stats(data)
+                except Exception as e:
+                    import traceback
+                    print(f"[training_frame] _apply_stats error: {e}")
+                    traceback.print_exc()
+        except Exception as e:
+            print(f"[training_frame] _poll_stats error: {e}")
 
         if self._training_thread and self._training_thread.is_alive():
-            self.after(200, self._poll_stats)
+            self.after(50, self._poll_stats)
+        else:
+            # Thread finished — final drain
+            while True:
+                try:
+                    data = self._stats_q.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._apply_stats(data)
+                except Exception as e:
+                    import traceback
+                    print(f"[training_frame] final drain error: {e}")
+                    traceback.print_exc()
 
     def _apply_stats(self, data: dict):
-        ep    = data["episode"]
-        total = data["total"]
+        try:
+            ep    = data["episode"]
+            total = data["total"]
 
-        self._episode_var.set(f"{ep:,} / {total:,}")
-        self._progress_bar["value"] = int(ep / total * 100)
-        self._pursuer_wr_var.set(f"{data['pursuer_wr']:.1f}%")
-        self._evader_wr_var.set(f"{data['evader_wr']:.1f}%")
-        self._avg_len_var.set(f"{data['avg_len']:.1f} steps")
-        self._p_reward_var.set(f"{data['p_reward']:.3f}")
-        self._e_reward_var.set(f"{data['e_reward']:.3f}")
+            self._episode_var.set(f"{ep:,} / {total:,}")
+            self._progress_bar["value"] = int(ep / total * 100)
+            self._pursuer_wr_var.set(f"{data['pursuer_wr']:.1f}%")
+            self._evader_wr_var.set(f"{data['evader_wr']:.1f}%")
+            self._avg_len_var.set(f"{data['avg_len']:.1f} steps")
+            self._p_reward_var.set(f"{data['p_reward']:.3f}")
+            self._e_reward_var.set(f"{data['e_reward']:.3f}")
 
-        eta = data["eta"]
-        if eta < 60:
-            self._eta_var.set(f"{eta:.0f}s")
-        elif eta < 3600:
-            self._eta_var.set(f"{eta/60:.1f}m")
-        else:
-            self._eta_var.set(f"{eta/3600:.1f}h")
+            eta = data["eta"]
+            if eta < 60:
+                self._eta_var.set(f"{eta:.0f}s")
+            elif eta < 3600:
+                self._eta_var.set(f"{eta/60:.1f}m")
+            else:
+                self._eta_var.set(f"{eta/3600:.1f}h")
 
-        # Mini reward chart
-        self._reward_history.append((ep, data["p_reward"], data["e_reward"]))
-        if HAS_MPL and len(self._reward_history) >= 2:
-            self._update_reward_chart()
+            self._reward_history.append((ep, data["p_reward"], data["e_reward"]))
+            if len(self._reward_history) >= 2:
+                try:
+                    self._update_reward_chart()
+                except Exception as chart_err:
+                    print(f"[chart] {chart_err}")
 
-        if data.get("done"):
-            self._on_training_complete(data)
+            if data.get("done"):
+                self._on_training_complete(data)
+
+        except Exception as e:
+            import traceback
+            print(f"[_apply_stats] {e}")
+            traceback.print_exc()
 
     def _update_reward_chart(self):
-        ax = self._reward_ax
-        ax.clear()
+        """Draw reward curves directly on tk.Canvas — no matplotlib, no blocking."""
+        c = self._reward_tk_canvas
+        c.delete("all")
+
+        if len(self._reward_history) < 2:
+            return
+
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w < 10 or h < 10:
+            w, h = 200, 100
+
+        pad = 4
         eps = [r[0] for r in self._reward_history]
         p_r = [r[1] for r in self._reward_history]
         e_r = [r[2] for r in self._reward_history]
 
-        ax.plot(eps, p_r, color=self.P["accent3"], linewidth=1.2)
-        ax.plot(eps, e_r, color=self.P["accent2"], linewidth=1.2)
-        ax.axhline(0, color=self.P["border"], linewidth=0.6)
-        self._style_mini_ax(ax)
-        self._reward_canvas.draw_idle()
+        all_vals = p_r + e_r
+        mn, mx = min(all_vals), max(all_vals)
+        if mx == mn:
+            mx = mn + 1
 
-    def _style_mini_ax(self, ax):
-        bg = self.P["surface"]
-        ax.set_facecolor(bg)
-        ax.figure.set_facecolor(bg)
-        for spine in ax.spines.values():
-            spine.set_color(self.P["border"])
-        ax.tick_params(colors=self.P["muted"], labelsize=7)
-        ax.set_ylabel("Reward", color=self.P["muted"], fontsize=7)
+        def to_x(ep):
+            return pad + (ep - eps[0]) / max(eps[-1] - eps[0], 1) * (w - 2*pad)
+
+        def to_y(val):
+            return (h - pad) - (val - mn) / (mx - mn) * (h - 2*pad)
+
+        # Zero line
+        y0 = to_y(0)
+        if pad < y0 < h - pad:
+            c.create_line(pad, y0, w - pad, y0,
+                          fill=self.P["border"], width=1, dash=(2, 3))
+
+        # Pursuer line (green)
+        pts_p = []
+        for ep, val in zip(eps, p_r):
+            pts_p += [to_x(ep), to_y(val)]
+        if len(pts_p) >= 4:
+            c.create_line(*pts_p, fill=self.P["accent3"], width=1.5, smooth=True)
+
+        # Evader line (purple)
+        pts_e = []
+        for ep, val in zip(eps, e_r):
+            pts_e += [to_x(ep), to_y(val)]
+        if len(pts_e) >= 4:
+            c.create_line(*pts_e, fill=self.P["accent2"], width=1.5, smooth=True)
+
+        # Axis labels
+        c.create_text(pad + 2, pad + 2, anchor="nw",
+                      text=f"{mx:.1f}", fill=self.P["muted"],
+                      font=("Segoe UI", 7))
+        c.create_text(pad + 2, h - pad - 2, anchor="sw",
+                      text=f"{mn:.1f}", fill=self.P["muted"],
+                      font=("Segoe UI", 7))
 
     def _on_training_complete(self, data: dict):
         self.state["metrics"] = data.get("metrics_obj")
         self._set_controls_during_training(False)
-        self._update_status("Done", self.P["accent3"])
+        if data.get("error"):
+            self._update_status(f"Error — check terminal", self.P["danger"])
+        else:
+            self._update_status("Done", self.P["accent3"])
         self._progress_bar["value"] = 100
         self._eta_var.set("complete")
 

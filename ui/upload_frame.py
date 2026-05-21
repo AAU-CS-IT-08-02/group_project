@@ -39,7 +39,7 @@ class UploadFrame(ttk.Frame):
         self.rowconfigure(2, weight=1)
 
         container = ttk.Frame(self, style="TFrame")
-        container.grid(row=1, column=0, sticky="nsew", padx=60, pady=40)
+        container.grid(row=1, column=0, sticky="nsew", padx=40, pady=20)
         container.columnconfigure(0, weight=1)
         container.columnconfigure(1, weight=1)
 
@@ -132,7 +132,7 @@ class UploadFrame(ttk.Frame):
 
         tk.Label(card, text=desc, bg=self.P["surface"],
                  fg=self.P["muted"], font=("Segoe UI", 9),
-                 wraplength=300, justify="left").grid(
+                 wraplength=0, justify="left").grid(
             row=1, column=0, sticky="w", padx=16, pady=(4, 12))
 
         ttk.Separator(card, orient="horizontal").grid(
@@ -147,7 +147,7 @@ class UploadFrame(ttk.Frame):
         path_label = tk.Label(pick_row, textvariable=path_var,
                               bg=self.P["surface"], fg=self.P["muted"],
                               font=("Segoe UI", 9), anchor="w",
-                              wraplength=260, justify="left")
+                              wraplength=0, justify="left")
         path_label.grid(row=0, column=0, sticky="ew")
 
         pick_btn = ttk.Button(

@@ -14,11 +14,12 @@ import datetime
 
 try:
     import matplotlib
-    matplotlib.use("TkAgg")
+    matplotlib.use("Agg")   # use non-interactive Agg — we render to image ourselves
     import matplotlib.pyplot as plt
     import numpy as np
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    import io
     HAS_MPL = True
 except ImportError:
     HAS_MPL = False
@@ -72,6 +73,7 @@ class ResultsFrame(ttk.Frame):
         self._nb.add(self._behaviour_tab,   text="  Behaviour  ")
         self._nb.add(self._reliability_tab, text="  Reliability  ")
 
+
         self._built = True
 
     def _make_tab(self, _name: str) -> ttk.Frame:
@@ -79,6 +81,8 @@ class ResultsFrame(ttk.Frame):
         f.columnconfigure(0, weight=1)
         f.rowconfigure(0, weight=1)
         return f
+
+
 
     # ──────────────────────────────────────────────────────────────────────────
     # Refresh — called after training completes
@@ -316,13 +320,11 @@ class ResultsFrame(ttk.Frame):
 
         data = _extract(metrics, "outcome") or _fake_outcome()
 
-        fig = Figure(figsize=(10, 5), facecolor=self.P["bg"])
-        fig.subplots_adjust(left=0.08, right=0.96, top=0.88, bottom=0.12,
-                            wspace=0.3)
-
-        ax1 = fig.add_subplot(1, 3, 1)
-        ax2 = fig.add_subplot(1, 3, 2)
-        ax3 = fig.add_subplot(1, 3, 3)
+        fig = Figure(facecolor=self.P["bg"], constrained_layout=True)
+        gs  = fig.add_gridspec(1, 3, width_ratios=[5, 3, 4])
+        ax1 = fig.add_subplot(gs[0])
+        ax2 = fig.add_subplot(gs[1])
+        ax3 = fig.add_subplot(gs[2])
 
         # Win rate over time
         eps = data["episodes"]
@@ -368,9 +370,7 @@ class ResultsFrame(ttk.Frame):
 
         data = _extract(metrics, "training") or _fake_training()
 
-        fig = Figure(figsize=(10, 5), facecolor=self.P["bg"])
-        fig.subplots_adjust(left=0.08, right=0.96, top=0.88, bottom=0.12,
-                            wspace=0.3, hspace=0.4)
+        fig = Figure(facecolor=self.P["bg"], constrained_layout=True)
 
         ax1 = fig.add_subplot(2, 2, 1)
         ax2 = fig.add_subplot(2, 2, 2)
@@ -418,9 +418,7 @@ class ResultsFrame(ttk.Frame):
 
         data = _extract(metrics, "policy") or _fake_policy()
 
-        fig = Figure(figsize=(10, 4.5), facecolor=self.P["bg"])
-        fig.subplots_adjust(left=0.08, right=0.96, top=0.88, bottom=0.08,
-                            wspace=0.35)
+        fig = Figure(facecolor=self.P["bg"], constrained_layout=True)
 
         ax1 = fig.add_subplot(1, 2, 1)
         ax2 = fig.add_subplot(1, 2, 2)
@@ -451,9 +449,7 @@ class ResultsFrame(ttk.Frame):
 
         data = _extract(metrics, "behaviour") or _fake_behaviour()
 
-        fig = Figure(figsize=(10, 4.5), facecolor=self.P["bg"])
-        fig.subplots_adjust(left=0.08, right=0.96, top=0.88, bottom=0.1,
-                            wspace=0.35)
+        fig = Figure(facecolor=self.P["bg"], constrained_layout=True)
 
         ax1 = fig.add_subplot(1, 2, 1)
         ax2 = fig.add_subplot(1, 2, 2)
@@ -499,9 +495,7 @@ class ResultsFrame(ttk.Frame):
 
         data = _extract(metrics, "reliability") or _fake_reliability()
 
-        fig = Figure(figsize=(10, 4.5), facecolor=self.P["bg"])
-        fig.subplots_adjust(left=0.08, right=0.96, top=0.88, bottom=0.1,
-                            wspace=0.35)
+        fig = Figure(facecolor=self.P["bg"], constrained_layout=True)
 
         ax1 = fig.add_subplot(1, 3, 1)
         ax2 = fig.add_subplot(1, 3, 2)
@@ -573,10 +567,55 @@ def _style_heatmap_ax(ax, P: dict):
 
 
 def _embed(fig: "Figure", parent: ttk.Frame):
-    canvas = FigureCanvasTkAgg(fig, master=parent)
-    canvas.draw()
-    widget = canvas.get_tk_widget()
-    widget.pack(fill="both", expand=True)
+    """
+    Render a matplotlib Figure into a plain tk.Canvas as a PNG image.
+    Redraws at the correct size every time the widget resizes.
+    Avoids FigureCanvasTkAgg entirely — no sizing quirks.
+    """
+    import tkinter as tk
+
+    tk_canvas = tk.Canvas(parent, bg=fig.get_facecolor()
+                          if isinstance(fig.get_facecolor(), str)
+                          else "#1a1d23",
+                          highlightthickness=0, bd=0)
+    tk_canvas.pack(fill="both", expand=True)
+
+    _photo_ref = [None]   # keep reference so GC doesn't collect it
+    _pending   = [None]   # pending after() id for debounce
+    _last      = [0, 0]
+
+    def _render(w, h):
+        if w < 20 or h < 20:
+            return
+        dpi = fig.get_dpi() or 100
+        # Use 82% of available space so charts don't fill edge-to-edge
+        fig.set_size_inches((w * 0.82) / dpi, (h * 0.82) / dpi, forward=False)
+
+        agg = FigureCanvasAgg(fig)
+        agg.draw()
+        buf = io.BytesIO()
+        agg.print_png(buf)
+        buf.seek(0)
+
+        import base64
+        b64 = base64.b64encode(buf.read()).decode()
+        photo = tk.PhotoImage(data=b64)
+
+        tk_canvas.delete("all")
+        tk_canvas.create_image(w // 2, h // 2, anchor="center", image=photo)
+        _photo_ref[0] = photo   # prevent garbage collection
+
+    def _on_configure(event):
+        w, h = event.width, event.height
+        if w == _last[0] and h == _last[1]:
+            return
+        _last[0], _last[1] = w, h
+        # Debounce: cancel any pending render and schedule a new one
+        if _pending[0] is not None:
+            tk_canvas.after_cancel(_pending[0])
+        _pending[0] = tk_canvas.after(80, lambda: _render(w, h))
+
+    tk_canvas.bind("<Configure>", _on_configure)
 
 
 def _clear(frame: ttk.Frame):

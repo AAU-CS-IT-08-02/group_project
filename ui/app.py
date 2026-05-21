@@ -172,8 +172,17 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("RL Pursuit-Evasion — Analysis & Comparison Tool")
-        self.geometry("1280x800")
-        self.minsize(960, 640)
+
+        # ── Responsive sizing — scale to the screen ───────────────────
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        # Start at 85% of screen, capped at 1400×900, min 800×540
+        w  = max(800,  min(1400, int(sw * 0.85)))
+        h  = max(540,  min(900,  int(sh * 0.85)))
+        x  = (sw - w) // 2
+        y  = (sh - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.minsize(800, 540)
         self.configure(bg=PALETTE["bg"])
 
         self.style = apply_theme(self)

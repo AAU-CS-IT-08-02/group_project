@@ -121,7 +121,7 @@ class Game:
 
     # ── Step ───────────────────────────────────────────────────────────
 
-    def step(self, pursuer_action: int, evader_action: int) -> StepResult:
+    def step(self, pursuer_action: int, evader_action: int, pursuer=None, evader=None) -> StepResult:
         """
         Advance the game by one step.
 
@@ -169,6 +169,8 @@ class Game:
             prev_evader_goal_dist,
             pursuer_wins,
             evader_wins,
+            pursuer_agent=pursuer,
+            evader_agent=evader,
         )
 
         # ── Build post-move observations ───────────────────────────────
@@ -199,57 +201,93 @@ class Game:
         prev_evader_goal_dist: int,
         pursuer_wins         : bool,
         evader_wins          : bool,
+        pursuer_agent        = None,
+        evader_agent         = None,
     ) -> Tuple[float, float]:
         """
-        Calculate rewards for both agents based on what happened
-        this step.
+        Calculate rewards for both agents based on what happened this step.
+
+        If an agent defines get_reward(), that method is called instead of
+        the default RewardConfig values. The two agents are checked
+        independently — one can use a custom function while the other uses
+        the default.
 
         Returns
         -------
         (pursuer_reward, evader_reward)
         """
-        r = self.rewards
-
-        # ── Terminal rewards ───────────────────────────────────────────
-        if pursuer_wins:
-            return r.capture_reward, -r.capture_reward
-
-        if evader_wins:
-            return -r.goal_reward, r.goal_reward
-
-        # ── Shaping rewards (non-terminal steps) ──────────────────────
         curr_agent_dist       = self.grid.agent_distance
         curr_evader_goal_dist = self.grid.evader_to_goal_distance
 
-        # Pursuer: reward for closing in, penalty for backing off
-        agent_dist_delta = prev_agent_dist - curr_agent_dist
-        if agent_dist_delta > 0:
-            pursuer_shaping =  r.closer_to_target     # got closer
-        elif agent_dist_delta < 0:
-            pursuer_shaping =  r.further_from_target  # moved away
-        else:
-            pursuer_shaping = 0.0
-
-        # Evader: reward for creating distance from pursuer
-        evader_shaping_escape = -pursuer_shaping   # opposite of pursuer
-
-        # Evader: extra reward for approaching goal
-        goal_dist_delta = prev_evader_goal_dist - curr_evader_goal_dist
-        if goal_dist_delta > 0:
-            evader_shaping_goal =  r.evader_closer_goal
-        elif goal_dist_delta < 0:
-            evader_shaping_goal = -r.evader_closer_goal
-        else:
-            evader_shaping_goal = 0.0
-
-        pursuer_reward = pursuer_shaping  + r.time_penalty
-        evader_reward  = (
-            evader_shaping_escape
-            + evader_shaping_goal
-            + r.time_penalty
+        # Shared kwargs passed to every get_reward() call
+        reward_kwargs = dict(
+            prev_agent_dist       = prev_agent_dist,
+            curr_agent_dist       = curr_agent_dist,
+            prev_evader_goal_dist = prev_evader_goal_dist,
+            curr_evader_goal_dist = curr_evader_goal_dist,
+            pursuer_wins          = pursuer_wins,
+            evader_wins           = evader_wins,
         )
 
+        pursuer_reward = self._agent_reward("pursuer", pursuer_agent, **reward_kwargs)
+        evader_reward  = self._agent_reward("evader",  evader_agent,  **reward_kwargs)
+
         return pursuer_reward, evader_reward
+
+    def _agent_reward(
+        self,
+        role         : str,
+        agent        ,
+        prev_agent_dist      : int,
+        curr_agent_dist      : int,
+        prev_evader_goal_dist: int,
+        curr_evader_goal_dist: int,
+        pursuer_wins         : bool,
+        evader_wins          : bool,
+    ) -> float:
+        """
+        Return the reward for one agent.
+
+        If the agent has a get_reward() method (and it does not raise
+        NotImplementedError), use that. Otherwise fall back to default.
+        """
+        if agent is not None:
+            try:
+                return agent.get_reward(
+                    role                  = role,
+                    prev_agent_dist       = prev_agent_dist,
+                    curr_agent_dist       = curr_agent_dist,
+                    prev_evader_goal_dist = prev_evader_goal_dist,
+                    curr_evader_goal_dist = curr_evader_goal_dist,
+                    pursuer_wins          = pursuer_wins,
+                    evader_wins           = evader_wins,
+                )
+            except (NotImplementedError, AttributeError):
+                pass   # agent chose not to override — use default
+
+        # ── Default reward (RewardConfig) ─────────────────────────────
+        r = self.rewards
+
+        if role == "pursuer":
+            if pursuer_wins: return  r.capture_reward
+            if evader_wins:  return -r.goal_reward
+            delta = prev_agent_dist - curr_agent_dist
+            shaping = (r.closer_to_target    if delta > 0 else
+                       r.further_from_target if delta < 0 else 0.0)
+            return shaping + r.time_penalty
+
+        else:  # evader
+            if evader_wins:  return  r.goal_reward
+            if pursuer_wins: return -r.capture_reward
+            # Escape shaping (opposite of pursuer distance change)
+            delta  = prev_agent_dist - curr_agent_dist
+            escape = (-r.closer_to_target    if delta > 0 else
+                       -r.further_from_target if delta < 0 else 0.0)
+            # Goal shaping
+            gdelta = prev_evader_goal_dist - curr_evader_goal_dist
+            goal   = (r.evader_closer_goal  if gdelta > 0 else
+                     -r.evader_closer_goal  if gdelta < 0 else 0.0)
+            return escape + goal + r.time_penalty
 
     # ── Helpers ────────────────────────────────────────────────────────
 
