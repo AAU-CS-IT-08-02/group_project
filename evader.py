@@ -3,7 +3,7 @@ import random
 from collections import defaultdict
 
 from env import NUM_ACTIONS
-from base_agent import BaseAgent
+from agents.base_agent import BaseAgent
 
 
 class AGENT_CLASS(BaseAgent):

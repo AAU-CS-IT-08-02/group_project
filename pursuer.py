@@ -5,7 +5,7 @@ from collections import defaultdict
 from env import NUM_ACTIONS
 
 # IMPORTANT: BaseAgent must exist in your framework
-from base_agent import BaseAgent
+from agents.base_agent import BaseAgent
 
 
 class AGENT_CLASS(BaseAgent):
