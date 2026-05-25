@@ -2,7 +2,8 @@ import numpy as np
 import random
 from collections import defaultdict
 
-from env import NUM_ACTIONS
+from ui.env import NUM_ACTIONS
+
 from agents.base_agent import BaseAgent
 
 
