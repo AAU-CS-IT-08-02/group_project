@@ -1,11 +1,12 @@
 import numpy as np
 import random
 from collections import defaultdict
-
 from agents.base_agent import BaseAgent
 
 
-# Helper constants
+
+# Self-contained environment logic
+
 
 GRID_SIZE = 10
 
@@ -19,21 +20,16 @@ ACTIONS = [
 NUM_ACTIONS = len(ACTIONS)
 
 
-# Helper functions
+def move(pos, action):
 
-def move(position, action):
-
-    x, y = position
+    x, y = pos
 
     if ACTIONS[action] == "UP":
         x -= 1
-
     elif ACTIONS[action] == "DOWN":
         x += 1
-
     elif ACTIONS[action] == "LEFT":
         y -= 1
-
     elif ACTIONS[action] == "RIGHT":
         y += 1
 
@@ -43,109 +39,52 @@ def move(position, action):
     return (x, y)
 
 
-def get_distance(p1, p2):
+def get_distance(a, b):
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
-    return abs(p1[0] - p2[0]) + abs(
-        p1[1] - p2[1]
-    )
+# Agent Implementation
 
-# Pursuer Agent
+class MyPursuer(BaseAgent):
 
-class AGENT_CLASS(BaseAgent):
+    ROLE = "pursuer"
+    NAME = "SARSA Pursuer"
 
-    def __init__(
-        self,
-        alpha=0.1,
-        gamma=0.95,
-        epsilon=1.0,
-        epsilon_decay=0.995,
-        epsilon_min=0.01
-    ):
+    def __init__(self):
 
-        self.Q = defaultdict(
-            lambda:
-            np.zeros(NUM_ACTIONS)
+        self.Q = defaultdict(lambda: np.zeros(NUM_ACTIONS))
+
+        self.alpha = 0.1
+        self.gamma = 0.95
+
+        self.epsilon = 1.0
+        self.epsilon_decay = 0.995
+        self.epsilon_min = 0.01
+
+    def select_action(self, obs):
+
+        if random.random() < self.epsilon:
+            return np.random.randint(NUM_ACTIONS)
+
+        return np.argmax(self.Q[obs])
+
+    def on_step(self, obs, action, reward, next_obs, done):
+
+        best_next = np.max(self.Q[next_obs])
+
+        target = reward + self.gamma * best_next
+
+        self.Q[obs][action] += self.alpha * (
+            target - self.Q[obs][action]
         )
 
-        self.alpha = alpha
-        self.gamma = gamma
-
-        self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        self.epsilon_min = epsilon_min
-
-    def choose_action(
-        self,
-        state
-    ):
-
-        if (
-            random.random()
-            <
-            self.epsilon
-        ):
-
-            return random.randint(
-                0,
-                NUM_ACTIONS - 1
+        if done:
+            self.epsilon = max(
+                self.epsilon_min,
+                self.epsilon * self.epsilon_decay
             )
 
-        return np.argmax(
-            self.Q[state]
-        )
+    def on_episode_end(self, episode, won):
+        pass
 
-    def update(
-        self,
-        state,
-        action,
-        reward,
-        next_state,
-        next_action
-    ):
 
-        current = (
-            self.Q[state][action]
-        )
-
-        target = (
-
-            reward
-
-            +
-
-            self.gamma
-
-            *
-
-            self.Q[
-                next_state
-            ][
-                next_action
-            ]
-        )
-
-        self.Q[state][action] += (
-
-            self.alpha
-
-            *
-
-            (
-                target
-                -
-                current
-            )
-        )
-
-    def decay(self):
-
-        self.epsilon = max(
-
-            self.epsilon_min,
-
-            self.epsilon
-
-            *
-
-            self.epsilon_decay
-        )
+AGENT_CLASS = MyPursuer
