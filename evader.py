@@ -2,45 +2,154 @@ import numpy as np
 import random
 from collections import defaultdict
 
-from ui.env import NUM_ACTIONS
-
 from agents.base_agent import BaseAgent
 
+# Helper constants 
+
+GRID_SIZE = 10
+
+ACTIONS = [
+    "UP",
+    "DOWN",
+    "LEFT",
+    "RIGHT"
+]
+
+NUM_ACTIONS = len(ACTIONS)
+
+# Helper functions
+
+def move(position, action):
+
+    x, y = position
+
+    if ACTIONS[action] == "UP":
+        x -= 1
+
+    elif ACTIONS[action] == "DOWN":
+        x += 1
+
+    elif ACTIONS[action] == "LEFT":
+        y -= 1
+
+    elif ACTIONS[action] == "RIGHT":
+        y += 1
+
+    x = max(0, min(GRID_SIZE - 1, x))
+    y = max(0, min(GRID_SIZE - 1, y))
+
+    return (x, y)
+
+
+def get_distance(p1, p2):
+
+    return abs(p1[0] - p2[0]) + abs(
+        p1[1] - p2[1]
+    )
+
+# Evader Agent
 
 class AGENT_CLASS(BaseAgent):
 
-    def __init__(self,
-                 alpha=0.1,
-                 gamma=0.95,
-                 epsilon=1.0,
-                 epsilon_decay=0.995,
-                 epsilon_min=0.01):
+    def __init__(
+        self,
+        alpha=0.1,
+        gamma=0.95,
+        epsilon=1.0,
+        epsilon_decay=0.995,
+        epsilon_min=0.01
+    ):
 
-        self.Q = defaultdict(lambda: np.zeros(NUM_ACTIONS))
+        self.Q = defaultdict(
+            lambda:
+            np.zeros(NUM_ACTIONS)
+        )
 
         self.alpha = alpha
         self.gamma = gamma
 
         self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
-        self.epsilon_min = epsilon_min
 
-    def choose_action(self, state):
+        self.epsilon_decay = (
+            epsilon_decay
+        )
 
-        if random.random() < self.epsilon:
-            return random.randint(0, NUM_ACTIONS - 1)
+        self.epsilon_min = (
+            epsilon_min
+        )
 
-        return np.argmax(self.Q[state])
+    def choose_action(
+        self,
+        state
+    ):
 
-    def update(self, state, action, reward, next_state, next_action):
+        if (
+            random.random()
+            <
+            self.epsilon
+        ):
 
-        current = self.Q[state][action]
+            return random.randint(
+                0,
+                NUM_ACTIONS - 1
+            )
 
-        target = reward + self.gamma * self.Q[next_state][next_action]
+        return np.argmax(
+            self.Q[state]
+        )
 
-        self.Q[state][action] += self.alpha * (target - current)
+    def update(
+        self,
+        state,
+        action,
+        reward,
+        next_state,
+        next_action
+    ):
+
+        current = (
+            self.Q[state][action]
+        )
+
+        target = (
+
+            reward
+
+            +
+
+            self.gamma
+
+            *
+
+            self.Q[
+                next_state
+            ][
+                next_action
+            ]
+        )
+
+        self.Q[state][action] += (
+
+            self.alpha
+
+            *
+
+            (
+                target
+                -
+                current
+            )
+        )
 
     def decay(self):
 
-        self.epsilon = max(self.epsilon_min,
-                           self.epsilon * self.epsilon_decay)
+        self.epsilon = max(
+
+            self.epsilon_min,
+
+            self.epsilon
+
+            *
+
+            self.epsilon_decay
+        )
