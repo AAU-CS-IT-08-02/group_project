@@ -19,9 +19,8 @@ class MyPursuer(BaseAgent):
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.01
 
-    def reset(self):
-
-        self.epsilon = 1.0
+    def reset(self): #Removed the reset of epsilon, if epsilon is reset, then epsion decay does not work
+        pass
 
     def select_action(self, observation: dict):
 
@@ -46,14 +45,24 @@ class MyPursuer(BaseAgent):
         if done:
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
-    def _encode(self, obs: dict):
+    def _encode(self, obs: dict): #This part was changed to use keywords from template
 
-        # convert dict → tuple state (IMPORTANT)
+        
+        # convert the template observation dict → tuple state (IMPORTANT) 
+        self_row, self_col = obs["self_pos"]
+        opp_row, opp_col = obs["opponent_pos"]
+        goal_row, goal_col = obs["goal_pos"]
+        steps_remaining = obs["steps_remaining"]
+
+        # Keep the state compact but compatible with the base agent contract.
         return (
-            obs["pursuer_x"],
-            obs["pursuer_y"],
-            obs["evader_x"],
-            obs["evader_y"]
+            self_row,
+            self_col,
+            opp_row,
+            opp_col,
+            goal_row,
+            goal_col,
+            steps_remaining,
         )
 
 
