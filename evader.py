@@ -1,48 +1,19 @@
-import numpy as np
 import random
 from agents.base_agent import BaseAgent
 
 
 class MyEvader(BaseAgent):
 
-    ROLE = "evader"
-    NAME = "Random Evader"
-
-    def __init__(self):
-
-        super().__init__()
-
-        self.reset()
+    def __init__(self, role="evader", config=None):
+        super().__init__(role, config)
 
     def reset(self):
-
-        self.epsilon = 1.0
-
-    def select_action(
-        self,
-        obs
-    ):
-
-        return random.randint(
-            0,
-            3
-        )
-
-    def on_step(
-        self,
-        obs,
-        action,
-        reward,
-        next_obs,
-        done
-    ):
         pass
 
-    def on_episode_end(
-        self,
-        episode,
-        won
-    ):
+    def select_action(self, observation: dict) -> int:
+        return random.randint(0, 3)
+
+    def update(self, observation, action, reward, next_observation, done):
         pass
 
 
