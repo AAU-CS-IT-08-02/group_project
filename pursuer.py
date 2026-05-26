@@ -4,9 +4,7 @@ from collections import defaultdict
 from agents.base_agent import BaseAgent
 
 
-
-# Self-contained environment logic
-
+# Self-contained helper logic
 
 GRID_SIZE = 10
 
@@ -26,10 +24,13 @@ def move(pos, action):
 
     if ACTIONS[action] == "UP":
         x -= 1
+
     elif ACTIONS[action] == "DOWN":
         x += 1
+
     elif ACTIONS[action] == "LEFT":
         y -= 1
+
     elif ACTIONS[action] == "RIGHT":
         y += 1
 
@@ -40,7 +41,11 @@ def move(pos, action):
 
 
 def get_distance(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    return abs(a[0] - b[0]) + abs(
+        a[1] - b[1]
+    )
+
 
 # Agent Implementation
 
@@ -51,8 +56,6 @@ class MyPursuer(BaseAgent):
 
     def __init__(self):
 
-        self.Q = defaultdict(lambda: np.zeros(NUM_ACTIONS))
-
         self.alpha = 0.1
         self.gamma = 0.95
 
@@ -60,31 +63,95 @@ class MyPursuer(BaseAgent):
         self.epsilon_decay = 0.995
         self.epsilon_min = 0.01
 
+        self.Q = defaultdict(
+            lambda:
+            np.zeros(NUM_ACTIONS)
+        )
+
+    # REQUIRED by BaseAgent
+    def reset(self):
+
+        self.Q = defaultdict(
+            lambda:
+            np.zeros(NUM_ACTIONS)
+        )
+
+        self.epsilon = 1.0
+
     def select_action(self, obs):
 
         if random.random() < self.epsilon:
-            return np.random.randint(NUM_ACTIONS)
 
-        return np.argmax(self.Q[obs])
-
-    def on_step(self, obs, action, reward, next_obs, done):
-
-        best_next = np.max(self.Q[next_obs])
-
-        target = reward + self.gamma * best_next
-
-        self.Q[obs][action] += self.alpha * (
-            target - self.Q[obs][action]
-        )
-
-        if done:
-            self.epsilon = max(
-                self.epsilon_min,
-                self.epsilon * self.epsilon_decay
+            return random.randint(
+                0,
+                NUM_ACTIONS - 1
             )
 
-    def on_episode_end(self, episode, won):
-        pass
+        return int(
+            np.argmax(
+                self.Q[obs]
+            )
+        )
+
+    def on_step(
+        self,
+        obs,
+        action,
+        reward,
+        next_obs,
+        done
+    ):
+
+        current = (
+            self.Q[obs][action]
+        )
+
+        next_best = np.max(
+            self.Q[next_obs]
+        )
+
+        target = (
+
+            reward
+
+            +
+
+            self.gamma
+
+            *
+
+            next_best
+        )
+
+        self.Q[obs][action] += (
+
+            self.alpha
+
+            *
+
+            (
+                target
+                -
+                current
+            )
+        )
+
+    def on_episode_end(
+        self,
+        episode,
+        won
+    ):
+
+        self.epsilon = max(
+
+            self.epsilon_min,
+
+            self.epsilon
+
+            *
+
+            self.epsilon_decay
+        )
 
 
 AGENT_CLASS = MyPursuer

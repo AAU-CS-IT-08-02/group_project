@@ -4,9 +4,7 @@ from collections import defaultdict
 from agents.base_agent import BaseAgent
 
 
-
-# Self-contained environment logic
-
+# Self-contained helper logic
 
 GRID_SIZE = 10
 
@@ -26,10 +24,13 @@ def move(pos, action):
 
     if ACTIONS[action] == "UP":
         x -= 1
+
     elif ACTIONS[action] == "DOWN":
         x += 1
+
     elif ACTIONS[action] == "LEFT":
         y -= 1
+
     elif ACTIONS[action] == "RIGHT":
         y += 1
 
@@ -40,11 +41,14 @@ def move(pos, action):
 
 
 def get_distance(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
+    return abs(a[0] - b[0]) + abs(
+        a[1] - b[1]
+    )
 
 
 # Evader Agent
+
 class MyEvader(BaseAgent):
 
     ROLE = "evader"
@@ -52,17 +56,62 @@ class MyEvader(BaseAgent):
 
     def __init__(self):
 
-        self.epsilon = 1.0  # optional if you later upgrade
+        self.epsilon = 1.0
 
-    def select_action(self, obs):
+        self.Q = defaultdict(
+            lambda:
+            np.zeros(NUM_ACTIONS)
+        )
 
-        return np.random.randint(NUM_ACTIONS)
+    # REQUIRED by BaseAgent
+    def reset(self):
 
-    def on_step(self, obs, action, reward, next_obs, done):
+        self.epsilon = 1.0
+
+        self.Q = defaultdict(
+            lambda:
+            np.zeros(NUM_ACTIONS)
+        )
+
+    def select_action(
+        self,
+        obs
+    ):
+
+        if random.random() < self.epsilon:
+
+            return random.randint(
+                0,
+                NUM_ACTIONS - 1
+            )
+
+        return int(
+            np.argmax(
+                self.Q[obs]
+            )
+        )
+
+    def on_step(
+        self,
+        obs,
+        action,
+        reward,
+        next_obs,
+        done
+    ):
+
         pass
 
-    def on_episode_end(self, episode, won):
-        pass
+    def on_episode_end(
+        self,
+        episode,
+        won
+    ):
+
+        self.epsilon = max(
+            0.01,
+            self.epsilon * 0.995
+        )
 
 
 AGENT_CLASS = MyEvader
