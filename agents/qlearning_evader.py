@@ -58,8 +58,18 @@ class QLearningEvader(BaseAgent):
         pass
 
     def save(self, path: str) -> None:
-        """Save Q-table in a JSON-readable format: list of [key_list, q_values]."""
-        serial = [[list(k), v] for k, v in self.q_table.items()]
+        """Save Q-table as labeled JSON records that are easy to inspect."""
+        serial = []
+        for state, q_values in self.q_table.items():
+            serial.append({
+                "state": self._state_to_record(state),
+                "q_values": {
+                    "up": q_values[0],
+                    "down": q_values[1],
+                    "left": q_values[2],
+                    "right": q_values[3],
+                },
+            })
         with open(path, "w", encoding="utf-8") as f:
             json.dump(serial, f, indent=2)
 
@@ -67,8 +77,22 @@ class QLearningEvader(BaseAgent):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # data is expected to be a list of [key_list, q_values]
-                d = {tuple(k): v for k, v in data}
+                d = {}
+                if isinstance(data, list):
+                    for entry in data:
+                        # new readable format
+                        if isinstance(entry, dict) and "state" in entry and "q_values" in entry:
+                            state = self._record_to_state(entry["state"])
+                            qv = entry["q_values"]
+                            d[state] = [
+                                float(qv.get("up", 0.0)),
+                                float(qv.get("down", 0.0)),
+                                float(qv.get("left", 0.0)),
+                                float(qv.get("right", 0.0)),
+                            ]
+                        # older list format: [state_list, q_values_list]
+                        elif isinstance(entry, list) and len(entry) == 2:
+                            d[tuple(entry[0])] = list(entry[1])
                 self.q_table = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0], d)
         except FileNotFoundError:
             # nothing to load
@@ -86,6 +110,30 @@ class QLearningEvader(BaseAgent):
         # include steps remaining so reward functions can access time info
         steps = observation.get("steps_remaining", 0)
         return (sr, sc, or_, oc, gr, gc, steps)
+
+    def _state_to_record(self, state: tuple) -> dict:
+        sr, sc, or_, oc, gr, gc, steps = state
+        return {
+            "self_pos": [sr, sc],
+            "opponent_pos": [or_, oc],
+            "goal_pos": [gr, gc],
+            "steps_remaining": steps,
+        }
+
+    def _record_to_state(self, record: dict) -> tuple:
+        self_pos = record.get("self_pos", [None, None])
+        opponent_pos = record.get("opponent_pos", [None, None])
+        goal_pos = record.get("goal_pos", [None, None])
+        steps = record.get("steps_remaining", 0)
+        return (
+            self_pos[0],
+            self_pos[1],
+            opponent_pos[0],
+            opponent_pos[1],
+            goal_pos[0],
+            goal_pos[1],
+            steps,
+        )
 
     def get_reward(
         self,
