@@ -47,7 +47,7 @@ ACTIONS
   Moving outside the grid boundary leaves the agent in place.
   Both agents move simultaneously every step.
 
-REWARDS (default reward scheme, can be changed in UI settings)
+REWARDS (default reward scheme)
 --------------------------------------------------------------
   Pursuer
     +10   on capture (same tile as evader)
@@ -101,7 +101,7 @@ class MyAgentTemplate(BaseAgent):
         self.role and self.config for you.
 
         Then initialise your algorithm's data structures here:
-        Q-tables, neural network weights, replay buffers, etc.
+        Q-tables, weights, etc.
 
         Parameters
         ----------
