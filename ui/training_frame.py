@@ -11,8 +11,6 @@ from tkinter import ttk
 import threading
 import time
 import queue
-import sys, os
-from pathlib import Path
 from pathlib import Path
 from typing import Optional
 

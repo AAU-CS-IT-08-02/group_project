@@ -8,11 +8,10 @@ Only once both are valid does the Continue button become clickable.
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog
 from pathlib import Path
 import importlib.util
 import sys
-import traceback
 
 
 class UploadFrame(ttk.Frame):

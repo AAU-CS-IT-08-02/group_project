@@ -26,7 +26,7 @@ Reward scheme (all values configurable via GameConfig):
 
 from dataclasses import dataclass
 from typing import Tuple, Optional
-from environment.grid import Grid, GridConfig, Position
+from environment.grid import Grid, GridConfig
 
 
 # ── Reward config ──────────────────────────────────────────────────────
